@@ -17,7 +17,16 @@ export default function RulesTab() {
       <div style={row}><span>Double</span><span>11%</span></div>
 
       <h3 style={{ color: pal.amber, marginTop: 12, fontSize: theme.type.size.body, fontWeight: 700 }}>Mystery items</h3>
-      <p style={{ color: pal.concrete }}>Planned, not live yet. Will drop from a global counter across every run — never from your own performance — so skill cannot buy one.</p>
+      <p style={{ color: pal.concrete }}>
+        Appear at bus stops from crossing {6} on — one per run at most, odds
+        matching their rarity. Kept only if you survive the clock, same as a
+        wallet or a painting. The Old Man, The Pile-Up and The Shortcut do
+        something the moment you use them; The Safe and The Haul are
+        collectible now, their effects wait on the bonus system in phase 3.
+        Real drops should come from a counter shared across every player, not
+        your own performance — that needs the same backend as the wallet, so
+        for now each run rolls independently in your browser.
+      </p>
 
       <h3 style={{ color: pal.amber, marginTop: 12, fontSize: theme.type.size.body, fontWeight: 700 }}>Police</h3>
       <p>They trail you by a fixed head start. Lead them too far (past crossing {REIN_FROM}, by more than {REIN_LEAD_S}s) and reinforcements close the gap once, hard.</p>

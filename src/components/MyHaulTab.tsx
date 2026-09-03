@@ -1,12 +1,16 @@
+'use client'
+
+import { useEffect, useState } from 'react'
 import { theme } from '@/design/theme'
-import { ICONS } from '@/design/sprite-data'
+import type { ItemKey } from '@/game/heistRun'
+import { getHaul, type HaulCounts } from '@/game/haulStore'
 import PixelIcon from './PixelIcon'
 
 const pal = theme.palette
 const BODY = theme.type.size.body
 const FEED = theme.type.size.feed
 
-const ITEMS: { key: keyof typeof ICONS; name: string; rarity: string; effect: string }[] = [
+const ITEMS: { key: ItemKey; name: string; rarity: string; effect: string }[] = [
   { key: 'oldMan', name: 'The Old Man', rarity: 'common', effect: 'stops traffic for 8s' },
   { key: 'pileUp', name: 'The Pile-Up', rarity: 'common', effect: 'blocks one lane' },
   { key: 'shortcut', name: 'The Shortcut', rarity: 'rare', effect: '5s more head start' },
@@ -15,38 +19,48 @@ const ITEMS: { key: keyof typeof ICONS; name: string; rarity: string; effect: st
 ]
 
 export default function MyHaulTab() {
+  const [counts, setCounts] = useState<HaulCounts | null>(null)
+  useEffect(() => { setCounts(getHaul()) }, [])
+
   return (
     <div style={{ fontFamily: theme.type.family, color: pal.pale, fontSize: BODY, lineHeight: theme.type.lineHeight.read }}>
       <p style={{ color: pal.concrete, fontSize: FEED }}>
         No wallet connected yet — embedded wallet and on-chain recording are
-        phase 3. Items are earned by playing and, once that lands, recorded
-        against your address and minted retroactively. Nothing here implies a
-        value, a price, or a date.
+        phase 3, and drops aren&apos;t yet the real global counter across every
+        player either (that needs the same backend). Counts below are earned
+        by playing, kept locally in this browser as a stand-in. Nothing here
+        implies a value, a price, or a date.
       </p>
 
       <h3 style={{ color: pal.amber, marginTop: 12, fontSize: BODY, fontWeight: 700 }}>The collection</h3>
-      {ITEMS.map((item) => (
-        <div key={item.key} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${pal.chrome}` }}>
-          <span
-            style={{
-              width: 22,
-              height: 22,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: pal.chrome,
-              flexShrink: 0,
-            }}
-          >
-            <PixelIcon name={item.key} scale={2} />
-          </span>
-          <div style={{ flex: 1 }}>
-            <div>{item.name} <span style={{ color: pal.concrete, fontSize: FEED }}>({item.rarity})</span></div>
-            <div style={{ color: pal.concrete, fontSize: FEED }}>{item.effect}</div>
+      {ITEMS.map((item) => {
+        const count = counts?.[item.key] ?? 0
+        return (
+          <div key={item.key} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${pal.chrome}` }}>
+            <span
+              style={{
+                width: 22,
+                height: 22,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: pal.chrome,
+                flexShrink: 0,
+                opacity: count > 0 ? 1 : 0.4,
+              }}
+            >
+              <PixelIcon name={item.key} scale={2} />
+            </span>
+            <div style={{ flex: 1 }}>
+              <div>{item.name} <span style={{ color: pal.concrete, fontSize: FEED }}>({item.rarity})</span></div>
+              <div style={{ color: pal.concrete, fontSize: FEED }}>{item.effect}</div>
+            </div>
+            <span style={{ color: count > 0 ? pal.gold : pal.steelLt, fontSize: FEED }}>
+              {count > 0 ? `x${count}` : 'not earned'}
+            </span>
           </div>
-          <span style={{ color: pal.steelLt, fontSize: FEED }}>not earned</span>
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

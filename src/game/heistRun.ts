@@ -33,7 +33,22 @@ const THIEF_SCREEN_Y = 118
 const BOTTOM_INSET = 2
 const HOP_STEP = 12
 
-export type Band = { k: string; h: number; dir?: number; spacing?: number; phase?: number; bottom: number; top: number }
+export type ItemKey = 'oldMan' | 'pileUp' | 'shortcut' | 'safe' | 'haul'
+
+// Per-run drop odds, straight from the prototype's own ODDS table (design
+// brief section 9's rarity tiers, made concrete). No global counter exists
+// yet — see haulStore.ts — so this is a local stand-in: an independent roll
+// per run, not "one per N crossings across every player".
+export const ITEM_ODDS: Record<ItemKey, number> = {
+  oldMan: 1 / 12,
+  pileUp: 1 / 16,
+  shortcut: 1 / 90,
+  safe: 1 / 120,
+  haul: 1 / 2400,
+}
+export const ITEM_ORDER: ItemKey[] = ['oldMan', 'pileUp', 'shortcut', 'safe', 'haul']
+
+export type Band = { k: string; h: number; dir?: number; spacing?: number; phase?: number; bottom: number; top: number; permanentBlock?: boolean }
 export type Vehicle = { x: number; w: number; kind: string; colour: { body: string; shade: string; light: string } }
 export type Mode = 'run' | 'police' | 'hit' | 'armed' | 'caught' | 'paid' | 'lost' | 'mobile'
 export type Hands = 'ticket' | 'wallet' | 'painting' | 'both' | 'empty'
@@ -48,6 +63,7 @@ export type RunState = {
   blink: number
   timeLeft: number
   outcome: 'collared' | 'flattened' | 'timeout'
+  heldItem: ItemKey | null
 }
 
 export type AlertInfo = { text: string | null; level: number; critical: boolean }
@@ -56,7 +72,7 @@ export type AlertInfo = { text: string | null; level: number; critical: boolean 
 export type LoggedInput = { tick: number; key: string; atMs: number }
 
 export class HeistRun {
-  state: RunState = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, outcome: 'collared' }
+  state: RunState = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, outcome: 'collared', heldItem: null }
   // No seed here — this is the ported prototype's Math.random() world, not
   // the seed-deterministic engine (see CALIBRATION.md). runId identifies a
   // run for telemetry/export purposes only, not for replay.
@@ -82,6 +98,10 @@ export class HeistRun {
   ms = 0
   headStart = 0
   lootPlan: Record<number, string> = {}
+  itemPlan: { index: number; item: ItemKey } | null = null
+  trafficFrozenUntilTick = -1
+  itemEffectBanner: { item: ItemKey; untilTick: number } | null = null
+  usedItemsThisRun: ItemKey[] = []
   furn: Record<number, { kind: string; x: number }[]> = {}
   rein: { t: number; x: number; wy: number; phase: 'in' | 'stop' | 'out' } | null = null
   reinDone = false
@@ -217,7 +237,11 @@ export class HeistRun {
   newRun(): void {
     this.buildWorld()
     this.rollLoot()
+    this.rollItem()
     this.rollFurniture()
+    this.trafficFrozenUntilTick = -1
+    this.itemEffectBanner = null
+    this.usedItemsThisRun = []
     this.rein = null
     this.reinDone = false
     this.reinBanner = 0
@@ -240,7 +264,7 @@ export class HeistRun {
     this.ms = 0
     this.lostAt = -1
     this.tick = 0
-    this.state = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, outcome: 'collared' }
+    this.state = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, outcome: 'collared', heldItem: null }
   }
 
   private stopX(index: number): number { return ((index * 67) % (W - 80)) + 8 }
@@ -255,6 +279,27 @@ export class HeistRun {
       plan[idx] = item
     })
     this.lootPlan = plan
+  }
+
+  /** Stand-in for the real drop mechanic (a global counter across every
+   *  player's crossings — needs the phase-3 backend this app doesn't have
+   *  yet). One independent roll per run, same odds as the prototype's own
+   *  ODDS table, checked rarest-last so a legendary roll doesn't get
+   *  silently overwritten by a common one rolling true in the same run. */
+  private rollItem(): void {
+    const stops = this.bands.map((b, i) => (b.k === 'stop' ? i : -1)).filter((i) => i >= 0)
+    if (!stops.length) { this.itemPlan = null; return }
+    const preferred = stops.filter((i) => !(i in this.lootPlan))
+    const pool = preferred.length ? preferred : stops
+    for (let k = ITEM_ORDER.length - 1; k >= 0; k--) {
+      const item = ITEM_ORDER[k]
+      if (Math.random() < ITEM_ODDS[item]) {
+        const index = pool[Math.floor(Math.random() * pool.length)]
+        this.itemPlan = { index, item }
+        return
+      }
+    }
+    this.itemPlan = null
   }
 
   private rollFurniture(): void {
@@ -289,16 +334,51 @@ export class HeistRun {
     return item
   }
 
+  private itemX(index: number): number { return Math.max(2, this.stopX(index) - 20) }
+
+  private itemAt(index: number): ItemKey | null {
+    if (!this.itemPlan || this.itemPlan.index !== index) return null
+    if (this.state.heldItem || this.usedItemsThisRun.length) return null // one per run, same as the loot rule
+    return this.itemPlan.item
+  }
+
   private pickUp(): void {
     const band = this.bands[this.bi]
+    if (band.k !== 'stop') return
     const loot = this.lootAt(this.bi)
-    if (band.k !== 'stop' || !loot) return
-    if (Math.abs((this.tx + 11) - (this.lootX(this.bi) + 4)) > 14) return
+    if (loot && Math.abs((this.tx + 11) - (this.lootX(this.bi) + 4)) <= 14) {
+      this.laugh()
+      const taken = { ...this.state.taken, [loot]: true }
+      const has = (n: string) => taken[n]
+      const hands: Hands = has('wallet') && has('painting') ? 'both' : has('wallet') ? 'wallet' : 'painting'
+      this.state = { ...this.state, taken, hands }
+    }
+    const item = this.itemAt(this.bi)
+    if (item && Math.abs((this.tx + 11) - (this.itemX(this.bi) + 4)) <= 14) {
+      this.laugh()
+      this.state = { ...this.state, heldItem: item }
+    }
+  }
+
+  /** Fires the held item's effect immediately. Once per item, same spirit as
+   *  the wallet/painting rule: it's a decision, not automatic. */
+  useItem(): void {
+    const item = this.state.heldItem
+    if (!item || !this.live()) return
     this.laugh()
-    const taken = { ...this.state.taken, [loot]: true }
-    const has = (n: string) => taken[n]
-    const hands: Hands = has('wallet') && has('painting') ? 'both' : has('wallet') ? 'wallet' : 'painting'
-    this.state = { ...this.state, taken, hands }
+    if (item === 'oldMan') {
+      this.trafficFrozenUntilTick = this.tick + Math.round(8000 / TICK_MS)
+    } else if (item === 'pileUp') {
+      const target = this.bands.findIndex((b, i) => i > this.bi && (b.k === 'car' || b.k === 'truck') && !b.permanentBlock)
+      if (target >= 0) this.bands[target].permanentBlock = true
+    } else if (item === 'shortcut') {
+      this.policeWy -= 5 * (POLICE_PX * 1000 / TICK_MS)
+    }
+    // safe / haul: no mechanical effect yet — there is no bonus system to
+    // freeze or raise the cap of (see MyHaulTab). Still collectible.
+    this.itemEffectBanner = { item, untilTick: this.tick + Math.round(1800 / TICK_MS) }
+    this.usedItemsThisRun.push(item)
+    this.state = { ...this.state, heldItem: null }
   }
 
   // ------------------------------------------------------------- traffic
@@ -307,6 +387,16 @@ export class HeistRun {
   vehiclesIn(index: number): Vehicle[] {
     const band = this.bands[index]
     if (band.k !== 'car' && band.k !== 'truck') return []
+    if (this.tick < this.trafficFrozenUntilTick) return [] // The Old Man: traffic stopped dead
+    if (band.permanentBlock) {
+      // The Pile-Up: a static wreck spanning the lane, wall to wall — this
+      // is map data for the rest of the run, not scrolling traffic.
+      const w = 48
+      const crashColour = CAR_COLOURS[1]
+      const out: Vehicle[] = []
+      for (let x = -8; x < W + 8; x += w - 4) out.push({ x, w, kind: 'car', colour: crashColour })
+      return out
+    }
     const sp = band.spacing || SPACING[band.k as 'car' | 'truck']
     const w = band.k === 'car' ? 48 : 68
     const off = (band.phase || 0) + this.trafficOff * (band.dir ?? 1)
@@ -351,10 +441,12 @@ export class HeistRun {
     }
   }
 
-  /** Escaping keeps the ticket and forfeits everything carried (both briefs agree on this). */
+  /** Escaping keeps the ticket and forfeits everything carried (both briefs agree on this) —
+   *  loot, any held item, and credit for items already used this run. */
   escapeNow(): void {
     if (this.state.crossed >= ESCAPE_AT && this.live()) {
-      this.state = { ...this.state, mode: 'paid', taken: {}, hands: 'ticket' }
+      this.usedItemsThisRun = []
+      this.state = { ...this.state, mode: 'paid', taken: {}, hands: 'ticket', heldItem: null }
     }
   }
 
@@ -619,6 +711,13 @@ export class HeistRun {
             ctx.fillStyle = PAL.K; ctx.fillRect(lx - 1, ly - 1, 10, 10)
             this.cell(ctx, ICONS[loot as keyof typeof ICONS], lx, ly)
             if (this.tick % 2 === 0) { ctx.fillStyle = PAL.W; ctx.fillRect(lx + 8, ly - 1, 1, 1) }
+          }
+          const item = this.itemAt(i)
+          if (item) {
+            const ix = this.itemX(i), iy = y + band.h - 10
+            ctx.fillStyle = PAL.b; ctx.fillRect(ix - 1, iy - 1, 10, 10)
+            this.cell(ctx, ICONS[item], ix, iy)
+            if (this.tick % 2 === 0) { ctx.fillStyle = PAL.G; ctx.fillRect(ix + 8, iy - 1, 1, 1) }
           }
         }
         ;(this.furn[i] || []).forEach((p) => {

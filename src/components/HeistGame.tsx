@@ -2,15 +2,24 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { theme } from '@/design/theme'
-import { ESCAPE_AT, H, HeistRun, SCALE, TICK_MS, W, type Mode } from '@/game/heistRun'
+import { ESCAPE_AT, H, HeistRun, SCALE, TICK_MS, W, type ItemKey, type Mode } from '@/game/heistRun'
 import { postFeedEvent } from '@/game/feedBus'
 import { exportDemoLogAsFile, getDemoLog, recordDemoRun } from '@/game/demoLog'
+import { recordItemEarned } from '@/game/haulStore'
 import type { EventType } from '@/design/lines'
 import PixelIcon from './PixelIcon'
 import ResponsiveScale from './ResponsiveScale'
 import TouchControls, { type Dir as TouchDir } from './TouchControls'
 
 type Props = { demo?: boolean }
+
+const ITEM_LABEL: Record<ItemKey, string> = {
+  oldMan: 'THE OLD MAN — TRAFFIC STOPS DEAD',
+  pileUp: 'THE PILE-UP — A LANE IS BLOCKED',
+  shortcut: 'THE SHORTCUT — FIVE SECONDS BOUGHT',
+  safe: 'THE SAFE',
+  haul: 'THE HAUL',
+}
 
 const REASON_LABEL: Record<'paid' | 'collared' | 'flattened' | 'timeout', string> = {
   paid: 'the crime paid',
@@ -60,6 +69,11 @@ export default function HeistGame({ demo = false }: Props) {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === ' ' || e.code === 'Space') {
+        e.preventDefault()
+        runRef.current.useItem()
+        return
+      }
       if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return
       e.preventDefault()
       runRef.current.onKey(e.key)
@@ -82,6 +96,10 @@ export default function HeistGame({ demo = false }: Props) {
       setHud(snapshot(run))
       if (!run.live() && !reportedRef.current) {
         reportedRef.current = true
+        if (run.state.mode === 'paid') {
+          const earned = [...run.usedItemsThisRun, ...(run.state.heldItem ? [run.state.heldItem] : [])]
+          earned.forEach(recordItemEarned)
+        }
         if (demo) {
           const total = recordDemoRun({
             runId: run.runId,
@@ -134,6 +152,25 @@ export default function HeistGame({ demo = false }: Props) {
           style={{ position: 'absolute', top: 0, left: 0, width: W * SCALE, height: H * SCALE, imageRendering: 'pixelated', border: `2px solid ${theme.palette.ink}` }}
         />
         <Hud hud={hud} />
+        {hud.effectBanner && (
+          <div
+            style={{
+              position: 'absolute',
+              top: HUD_HEIGHT,
+              left: 0,
+              right: 0,
+              background: theme.palette.gold,
+              color: theme.palette.ink,
+              textAlign: 'center',
+              fontFamily: theme.type.family,
+              fontSize: theme.type.size.feed,
+              padding: '2px 0',
+              pointerEvents: 'none',
+            }}
+          >
+            {ITEM_LABEL[hud.effectBanner]}
+          </div>
+        )}
         {ended && (
           <div
             style={{
@@ -180,6 +217,11 @@ export default function HeistGame({ demo = false }: Props) {
           {canEscape && (
             <button onClick={() => runRef.current.escapeNow()} style={buttonStyle}>ESCAPE</button>
           )}
+          {hud.heldItem && !ended && (
+            <button onClick={() => runRef.current.useItem()} style={{ ...buttonStyle, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <PixelIcon name={hud.heldItem} scale={2} /> USE
+            </button>
+          )}
           <button onClick={toggleSound} style={{ ...buttonStyle, padding: '6px 10px' }} title={hud.soundOn ? 'Mute' : 'Unmute'}>
             {hud.soundOn ? 'SOUND ON' : 'SOUND OFF'}
           </button>
@@ -216,6 +258,8 @@ function snapshot(run: HeistRun) {
     hands: run.state.hands,
     alertMsg: run.alertMsg,
     soundOn: run.soundOn,
+    heldItem: run.state.heldItem,
+    effectBanner: run.itemEffectBanner && run.tick < run.itemEffectBanner.untilTick ? run.itemEffectBanner.item : null,
   }
 }
 
