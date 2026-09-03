@@ -1,64 +1,90 @@
-// The harness's bot player: drives real simulate()-equivalent play (lives
-// and police fully in effect) using the engine's shared greedy policy, so
-// the sweep measures what a scripted player would actually get away with.
-import { GOAL, TPS } from '../engine/constants'
-import { initState, step } from '../engine/simulate'
-import { planMove } from '../engine/solver'
-import type { Config, Result, State } from '../engine/types'
+// The calibration bot for the LIVE game (src/game/heistRun.ts) — the port of
+// the approved prototype that Play/Demo actually run. This does not touch
+// src/engine/ (the separate seed-deterministic track from the code brief,
+// not currently wired to the game); see CALIBRATION.md for why.
+//
+// heistRun.ts has no density/speedMul config surface (the prototype's world
+// is a fixed rule set, randomised per run via Math.random()), so there is no
+// grid to sweep — this runs many independent trials of that one rule set.
+import { ESCAPE_AT, HeistRun, REIN_FROM, TICK_MS, type Vehicle } from '@/game/heistRun'
 
-export type BotRun = {
-  result: Result
-  reinforcementFired: boolean
-  leadAtSeventhS: number | null
-  lootAttempted: boolean
-  lootKept: boolean
-  roadLaneCount: number
-  rejectedLaneAttempts: number
-  maxCrossingsAchievable: number
-  impossible: boolean
+const MAX_TICKS = Math.ceil(65000 / TICK_MS) // hard stop past the 60s run clock, safety margin
+
+function isSafe(run: HeistRun, bandIndex: number, tx: number, lookaheadTicks: number): boolean {
+  const band = run.bands[(bandIndex % run.bands.length + run.bands.length) % run.bands.length]
+  if (band.k !== 'car' && band.k !== 'truck') return true
+  const savedOff = run.trafficOff
+  const step = run.trafficPx()
+  const lo = tx + 2, hi = tx + 20
+  let safe = true
+  for (let k = 0; k <= lookaheadTicks && safe; k++) {
+    run.trafficOff = savedOff + step * k
+    const vehicles: Vehicle[] = run.vehiclesIn(bandIndex)
+    if (vehicles.some((v) => v.x < hi && v.x + v.w > lo)) safe = false
+  }
+  run.trafficOff = savedOff
+  return safe
 }
 
-export function runBot(seed: number, cfg: Config): BotRun {
-  let state: State = initState(seed, cfg)
+/** Greedy policy: advance when it's safe now and stays safe long enough to
+ * clear the band; otherwise sidestep toward whichever side looks clearer.
+ * Not required to be optimal — only to approximate a scripted player's ceiling. */
+function decideMove(run: HeistRun): 'ArrowUp' | 'ArrowLeft' | 'ArrowRight' | null {
+  if (run.hopTo !== null) return null
+  const W_BOUND_MIN = 2, W_BOUND_MAX = 226 - 24
+
+  const forwardTicks = 4
+  if (isSafe(run, run.bi, run.tx, forwardTicks) && isSafe(run, run.bi + 1, run.tx, forwardTicks + 2)) {
+    return 'ArrowUp'
+  }
+  const left = run.tx - 6
+  const right = run.tx + 6
+  const leftOk = left >= W_BOUND_MIN && isSafe(run, run.bi, left, forwardTicks)
+  const rightOk = right <= W_BOUND_MAX && isSafe(run, run.bi, right, forwardTicks)
+  if (leftOk && rightOk) return Math.random() < 0.5 ? 'ArrowLeft' : 'ArrowRight'
+  if (leftOk) return 'ArrowLeft'
+  if (rightOk) return 'ArrowRight'
+  return null
+}
+
+export type BotTrialResult = {
+  win: boolean
+  crossed: number
+  outcome: 'collared' | 'flattened' | 'timeout' | 'escaped'
+  heartsLost: number
+  reinforcementFired: boolean
+  leadAtSeventhS: number | null
+  ticks: number
+}
+
+export function runBotTrial(): BotTrialResult {
+  const run = new HeistRun()
   let leadAtSeventhS: number | null = null
-  let lootAttempted = false
+  let ticks = 0
 
-  while (!state.ended && state.tick < 1e9) {
-    const lane = state.map.lanes[state.player.lane]
-    const nextLane = state.map.lanes[state.player.lane + 1]
-    const dir = planMove(lane, nextLane, state.player.col, state.tick) ?? undefined
-    const prevCrossings = state.crossings
-    state = step(state, dir)
-    if (state.hasWallet || state.hasPainting) lootAttempted = true
-    if (prevCrossings < 7 && state.crossings >= 7 && leadAtSeventhS === null) {
-      leadAtSeventhS = state.policeLagTicks / TPS
+  while (run.live() && ticks < MAX_TICKS) {
+    // The rational move once the door is armed: bank the win. Grinding for
+    // more crossings only adds risk for a bot that doesn't value loot.
+    if (run.state.crossed >= ESCAPE_AT) { run.escapeNow(); break }
+    const dir = decideMove(run)
+    if (dir) run.onKey(dir)
+    else if (!run.started) run.onKey('ArrowUp') // first move only: get the run started
+    const prevCrossed = run.state.crossed
+    run.advance()
+    ticks++
+    if (prevCrossed < REIN_FROM && run.state.crossed >= REIN_FROM && leadAtSeventhS === null) {
+      leadAtSeventhS = run.secsToArrest()
     }
-    if (!state.map.lanes[state.player.lane]) break // ran off generated lanes
   }
 
-  const result = state.result ?? {
-    crossings: state.crossings,
-    lanesReached: state.player.lane,
-    win: state.crossings >= GOAL,
-    escaped: false,
-    heartsLost: 0,
-    walletOpened: 0,
-    paintingKept: false,
-    endTick: state.tick,
-    reason: state.crossings >= GOAL ? ('survived' as const) : ('outOfTime' as const),
-  }
-
-  const roadLaneCount = state.map.lanes.filter((l) => l.kind === 'road').length
-
+  const win = run.state.mode === 'paid'
   return {
-    result,
-    reinforcementFired: state.reinforcementFired,
+    win,
+    crossed: run.state.crossed,
+    outcome: win ? 'escaped' : run.state.outcome,
+    heartsLost: 3 - run.lives(),
+    reinforcementFired: run.reinDone,
     leadAtSeventhS,
-    lootAttempted,
-    lootKept: result.walletOpened > 0 || result.paintingKept,
-    roadLaneCount,
-    rejectedLaneAttempts: state.map.rejectedLaneAttempts,
-    maxCrossingsAchievable: state.map.maxCrossingsAchievable,
-    impossible: state.map.maxCrossingsAchievable < GOAL,
+    ticks,
   }
 }

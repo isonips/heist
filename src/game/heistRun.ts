@@ -110,6 +110,7 @@ export class HeistRun {
   // user gesture (a keypress), so autoplay is never blocked.
   private audio(): AudioContext | null {
     if (!this.soundOn) return null
+    if (typeof window === 'undefined') return null // headless (e.g. the calibration harness)
     if (!this.ac) {
       const AC = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
       if (!AC) { this.ac = null; return null }
