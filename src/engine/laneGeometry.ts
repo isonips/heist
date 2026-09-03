@@ -81,6 +81,31 @@ export function tableClearRun(table: Uint8Array, ticks: number, col: number, t: 
   return n
 }
 
+/**
+ * Screen-space FP positions (within [0, COLS*FP)) of every occupied slot's
+ * centre at tick `t` — the render-side twin of isColumnBlocked's own math,
+ * so a car is drawn exactly where it can hit the player, never a pixel off.
+ * A strip shorter than the viewport tiles more than once; this returns every
+ * visible copy.
+ */
+export function trafficCarScreenPositions(lane: Lane, t: number): number[] {
+  const traffic = lane.traffic
+  if (!traffic) return []
+  const ring = stripLenFP(lane)
+  const scrollFP = mod(t * traffic.speedFpPerTick, ring)
+  const viewportSpan = COLS * FP
+  const positions: number[] = []
+  for (let i = 0; i < traffic.slots; i++) {
+    if (!traffic.occupied[i]) continue
+    const contentPos = mod(i * traffic.period * FP + FP / 2, ring)
+    const base = mod(contentPos - scrollFP, ring)
+    for (let x = base - ring; x < viewportSpan + ring; x += ring) {
+      if (x >= 0 && x < viewportSpan) positions.push(x)
+    }
+  }
+  return positions
+}
+
 export function clampCol(c: number): number {
   return Math.max(0, Math.min(COLS - 1, c))
 }

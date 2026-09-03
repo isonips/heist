@@ -1,0 +1,644 @@
+{
+  "meta": {
+    "game": "HEIST",
+    "character": "THE ESCAPEE — black knit beanie, white prison jumpsuit with black stripes, gold lottery ticket in his hand. Nothing else is worn.",
+    "source": "sprite-data.js — the only place pixel art is authored",
+    "sheet": "sprite-sheet.png",
+    "size": {
+      "w": 212,
+      "h": 120
+    },
+    "palette": {
+      "K": "#05060a",
+      "k": "#10131d",
+      "T": "#171b28",
+      "S": "#2b3350",
+      "s": "#4c5878",
+      "C": "#8b98bd",
+      "P": "#d7def2",
+      "W": "#ffffff",
+      "A": "#ffa11f",
+      "a": "#d1690a",
+      "b": "#7a3b04",
+      "G": "#ffd84d",
+      "R": "#ff2f2f",
+      "B": "#2358ff",
+      "V": "#2f5d3a",
+      "x": "#1d2230"
+    },
+    "paletteName": "SODIUM",
+    "maxColours": 16,
+    "note": "Anchor every draw by `origin` (bottom-centre), never by the cell corner."
+  },
+  "cell": {
+    "w": 22,
+    "h": 32,
+    "footRow": 8,
+    "xOffset": 1,
+    "note": "Feet sit on the cell bottom row at every scale. Integer scales only."
+  },
+  "composite": {
+    "strategy": "runtime-stacking",
+    "note": "There are no accessories. The only thing that changes on the figure is what is in his two fists, drawn as a held layer over the pose and NOT masked to it — the item sticks out past his silhouette.",
+    "order": [
+      "thief.<pose>",
+      "held.<left>",
+      "held.<right>"
+    ],
+    "hands": {
+      "ticket": [
+        "held.ticket"
+      ],
+      "wallet": [
+        "held.wallet"
+      ],
+      "painting": [
+        "held.painting"
+      ],
+      "both": [
+        "held.wallet",
+        "held.painting"
+      ],
+      "empty": [],
+      "note": "ticket is the default carry. He can lift the wallet alone, the painting alone, or both; the ticket is out of sight while he is holding anything stolen, and comes back when the loot is cashed. Wallet is always the left fist, painting always the right."
+    },
+    "fists": {
+      "left": {
+        "x": 3,
+        "y": 12
+      },
+      "right": {
+        "x": 16,
+        "y": 12
+      }
+    }
+  },
+  "recolour": {
+    "vehicle.car": {
+      "body": "A",
+      "bodyShade": "a"
+    },
+    "vehicle.truck": {
+      "body": "A",
+      "bodyShade": "a"
+    },
+    "note": "Swap the two body channels per colourway. The jumpsuit uses the same A channel and is NEVER recoloured — that amber is the player.",
+    "colourways": [
+      "sirenRed",
+      "sirenBlu",
+      "pale",
+      "concrete",
+      "verge",
+      "gold"
+    ],
+    "fixed": {
+      "outline": "K",
+      "windscreen": "P",
+      "headlight": "G"
+    }
+  },
+  "animations": {
+    "walk": {
+      "ms": 110,
+      "loop": true,
+      "cels": [
+        "thief.walk1",
+        "thief.walk2",
+        "thief.walk3",
+        "thief.walk2"
+      ]
+    },
+    "hop": {
+      "ms": 90,
+      "loop": false,
+      "cels": [
+        "thief.stand",
+        "thief.tuck",
+        "thief.splay",
+        "thief.tuck"
+      ],
+      "riseY": [
+        1,
+        -5,
+        -9,
+        -2
+      ]
+    },
+    "hit": {
+      "ms": 130,
+      "loop": false,
+      "then": "blink",
+      "cels": [
+        "thief.hit",
+        "thief.hit",
+        "thief.hit",
+        "thief.stand",
+        "thief.stand",
+        "thief.stand"
+      ],
+      "flashOn": [
+        1,
+        3,
+        5
+      ],
+      "line": "THE TICKET. GET THE TICKET."
+    },
+    "blink": {
+      "ms": 125,
+      "loop": false,
+      "cels": [
+        "thief.stand",
+        "thief.stand",
+        "thief.stand",
+        "thief.stand",
+        "thief.stand",
+        "thief.stand",
+        "thief.stand",
+        "thief.stand",
+        "thief.stand",
+        "thief.stand"
+      ],
+      "flashOn": [
+        1,
+        3,
+        5,
+        7
+      ],
+      "invulnerable": false
+    },
+    "caught": {
+      "ms": 160,
+      "loop": false,
+      "cels": [
+        "thief.caught",
+        "thief.caught",
+        "thief.caught",
+        "thief.caught"
+      ],
+      "sirenOn": [
+        1,
+        3
+      ],
+      "line": "AH SHIT, HERE WE GO AGAIN"
+    },
+    "police": {
+      "ms": 180,
+      "loop": true,
+      "cels": [
+        "vehicle.police_a",
+        "vehicle.police_b"
+      ]
+    }
+  },
+  "modes": {
+    "flash": "lightest channels -> ink, everything else -> pale. A stepped 1-frame invert, never an opacity fade.",
+    "siren": "fill the cell with amberDp, then K stays K and everything else -> sirenRed."
+  },
+  "lines": {
+    "caught": "AH SHIT, HERE WE GO AGAIN",
+    "ticketLost": "THE TICKET. GET THE TICKET.",
+    "escaped": "STILL HOLDING IT."
+  },
+  "frames": {
+    "thief.stand": {
+      "x": 0,
+      "y": 0,
+      "w": 22,
+      "h": 32,
+      "origin": {
+        "x": 11,
+        "y": 32
+      }
+    },
+    "thief.walk1": {
+      "x": 22,
+      "y": 0,
+      "w": 22,
+      "h": 32,
+      "origin": {
+        "x": 11,
+        "y": 32
+      }
+    },
+    "thief.walk2": {
+      "x": 44,
+      "y": 0,
+      "w": 22,
+      "h": 32,
+      "origin": {
+        "x": 11,
+        "y": 32
+      }
+    },
+    "thief.walk3": {
+      "x": 66,
+      "y": 0,
+      "w": 22,
+      "h": 32,
+      "origin": {
+        "x": 11,
+        "y": 32
+      }
+    },
+    "thief.tuck": {
+      "x": 88,
+      "y": 0,
+      "w": 22,
+      "h": 32,
+      "origin": {
+        "x": 11,
+        "y": 32
+      }
+    },
+    "thief.splay": {
+      "x": 110,
+      "y": 0,
+      "w": 22,
+      "h": 32,
+      "origin": {
+        "x": 11,
+        "y": 32
+      }
+    },
+    "thief.hit": {
+      "x": 132,
+      "y": 0,
+      "w": 22,
+      "h": 32,
+      "origin": {
+        "x": 11,
+        "y": 32
+      }
+    },
+    "thief.caught": {
+      "x": 154,
+      "y": 0,
+      "w": 22,
+      "h": 32,
+      "origin": {
+        "x": 11,
+        "y": 32
+      }
+    },
+    "held.ticket": {
+      "x": 0,
+      "y": 32,
+      "w": 22,
+      "h": 32,
+      "origin": {
+        "x": 11,
+        "y": 32
+      }
+    },
+    "held.wallet": {
+      "x": 22,
+      "y": 32,
+      "w": 22,
+      "h": 32,
+      "origin": {
+        "x": 11,
+        "y": 32
+      }
+    },
+    "held.painting": {
+      "x": 44,
+      "y": 32,
+      "w": 22,
+      "h": 32,
+      "origin": {
+        "x": 11,
+        "y": 32
+      }
+    },
+    "env.tree": {
+      "x": 0,
+      "y": 64,
+      "w": 12,
+      "h": 20,
+      "origin": {
+        "x": 6,
+        "y": 20
+      }
+    },
+    "env.bin": {
+      "x": 12,
+      "y": 64,
+      "w": 10,
+      "h": 20,
+      "origin": {
+        "x": 5,
+        "y": 20
+      }
+    },
+    "env.bollard": {
+      "x": 22,
+      "y": 64,
+      "w": 6,
+      "h": 20,
+      "origin": {
+        "x": 3,
+        "y": 20
+      }
+    },
+    "env.busStop": {
+      "x": 28,
+      "y": 64,
+      "w": 24,
+      "h": 20,
+      "origin": {
+        "x": 12,
+        "y": 20
+      }
+    },
+    "env.bystander": {
+      "x": 52,
+      "y": 64,
+      "w": 12,
+      "h": 20,
+      "origin": {
+        "x": 6,
+        "y": 20
+      }
+    },
+    "vehicle.car": {
+      "x": 0,
+      "y": 84,
+      "w": 48,
+      "h": 28,
+      "origin": {
+        "x": 24,
+        "y": 28
+      }
+    },
+    "vehicle.truck": {
+      "x": 48,
+      "y": 84,
+      "w": 68,
+      "h": 28,
+      "origin": {
+        "x": 34,
+        "y": 28
+      }
+    },
+    "vehicle.police_a": {
+      "x": 116,
+      "y": 84,
+      "w": 48,
+      "h": 28,
+      "origin": {
+        "x": 24,
+        "y": 28
+      }
+    },
+    "vehicle.police_b": {
+      "x": 164,
+      "y": 84,
+      "w": 48,
+      "h": 28,
+      "origin": {
+        "x": 24,
+        "y": 28
+      }
+    },
+    "icon.disk": {
+      "x": 0,
+      "y": 112,
+      "w": 8,
+      "h": 8,
+      "origin": {
+        "x": 4,
+        "y": 8
+      }
+    },
+    "icon.min": {
+      "x": 8,
+      "y": 112,
+      "w": 8,
+      "h": 8,
+      "origin": {
+        "x": 4,
+        "y": 8
+      }
+    },
+    "icon.close": {
+      "x": 16,
+      "y": 112,
+      "w": 8,
+      "h": 8,
+      "origin": {
+        "x": 4,
+        "y": 8
+      }
+    },
+    "icon.heartFull": {
+      "x": 24,
+      "y": 112,
+      "w": 8,
+      "h": 8,
+      "origin": {
+        "x": 4,
+        "y": 8
+      }
+    },
+    "icon.heartEmpty": {
+      "x": 32,
+      "y": 112,
+      "w": 8,
+      "h": 8,
+      "origin": {
+        "x": 4,
+        "y": 8
+      }
+    },
+    "icon.ticket": {
+      "x": 40,
+      "y": 112,
+      "w": 8,
+      "h": 8,
+      "origin": {
+        "x": 4,
+        "y": 8
+      }
+    },
+    "icon.wallet": {
+      "x": 48,
+      "y": 112,
+      "w": 8,
+      "h": 8,
+      "origin": {
+        "x": 4,
+        "y": 8
+      }
+    },
+    "icon.painting": {
+      "x": 56,
+      "y": 112,
+      "w": 8,
+      "h": 8,
+      "origin": {
+        "x": 4,
+        "y": 8
+      }
+    },
+    "icon.coin": {
+      "x": 64,
+      "y": 112,
+      "w": 8,
+      "h": 8,
+      "origin": {
+        "x": 4,
+        "y": 8
+      }
+    },
+    "icon.siren": {
+      "x": 72,
+      "y": 112,
+      "w": 8,
+      "h": 8,
+      "origin": {
+        "x": 4,
+        "y": 8
+      }
+    },
+    "icon.escape": {
+      "x": 80,
+      "y": 112,
+      "w": 8,
+      "h": 8,
+      "origin": {
+        "x": 4,
+        "y": 8
+      }
+    },
+    "icon.draw": {
+      "x": 88,
+      "y": 112,
+      "w": 8,
+      "h": 8,
+      "origin": {
+        "x": 4,
+        "y": 8
+      }
+    },
+    "icon.running": {
+      "x": 96,
+      "y": 112,
+      "w": 8,
+      "h": 8,
+      "origin": {
+        "x": 4,
+        "y": 8
+      }
+    },
+    "icon.speech": {
+      "x": 104,
+      "y": 112,
+      "w": 8,
+      "h": 8,
+      "origin": {
+        "x": 4,
+        "y": 8
+      }
+    },
+    "icon.oldMan": {
+      "x": 112,
+      "y": 112,
+      "w": 8,
+      "h": 8,
+      "origin": {
+        "x": 4,
+        "y": 8
+      }
+    },
+    "icon.pileUp": {
+      "x": 120,
+      "y": 112,
+      "w": 8,
+      "h": 8,
+      "origin": {
+        "x": 4,
+        "y": 8
+      }
+    },
+    "icon.shortcut": {
+      "x": 128,
+      "y": 112,
+      "w": 8,
+      "h": 8,
+      "origin": {
+        "x": 4,
+        "y": 8
+      }
+    },
+    "icon.safe": {
+      "x": 136,
+      "y": 112,
+      "w": 8,
+      "h": 8,
+      "origin": {
+        "x": 4,
+        "y": 8
+      }
+    },
+    "icon.haul": {
+      "x": 144,
+      "y": 112,
+      "w": 8,
+      "h": 8,
+      "origin": {
+        "x": 4,
+        "y": 8
+      }
+    },
+    "icon.chevron": {
+      "x": 152,
+      "y": 112,
+      "w": 8,
+      "h": 8,
+      "origin": {
+        "x": 4,
+        "y": 8
+      }
+    },
+    "icon.online": {
+      "x": 160,
+      "y": 112,
+      "w": 8,
+      "h": 8,
+      "origin": {
+        "x": 4,
+        "y": 8
+      }
+    }
+  },
+  "bands": {
+    "pose": "y 0-31",
+    "held": "y 32-63",
+    "env": "y 64-83 bottom-aligned in 20px",
+    "vehicle": "y 84-111 bottom-aligned in 28px",
+    "icon": "y 112-119"
+  },
+  "road": {
+    "laneHeight": {
+      "car": 24,
+      "truck": 32
+    },
+    "vehicle": {
+      "clearTop": 2,
+      "bottomInset": 2
+    },
+    "note": "A vehicle fills its lane. There is deliberately no empty corridor above a car, because a corridor reads as passable space and it is not. Ownership is carried by the flat shadow inside the band."
+  },
+  "spawn": {
+    "fixed": false,
+    "note": "NOTHING ON THE ROAD IS FIXED. Bus stop position, which loot is on the bench, which lane the truck owns, traffic gaps and phases are all rolled per run. The player walks to the loot and crosses for it; a bot that learns one layout learns nothing.",
+    "perRun": {
+      "busStops": "1-2 per run, x rolled along the top pavement, never within 24px of an edge",
+      "loot": "wallet | painting | both | none — rolled per bus stop",
+      "lootPosition": "on the bench of its own stop, so reaching it costs crossings",
+      "truckLane": "one lane is promoted to a 32px truck lane, rolled per run",
+      "trafficPhase": "per-lane offset and gap rolled per run, never a repeating pattern",
+      "obstacles": "tree | bin | bollard positions rolled on the verge and pavements"
+    }
+  }
+}

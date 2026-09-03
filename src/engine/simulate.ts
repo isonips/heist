@@ -131,7 +131,11 @@ export function step(prevState: State, input?: Dir): State {
   }
 
   updatePolice(state)
-  if (state.policeLane >= state.player.lane) {
+  // policeLane defaults to 0 (the start pavement) until the trailing formula
+  // has a genuine reference point (tick > policeLagTicks) — before that, 0
+  // is a sentinel, not a real position, and must never trigger a catch.
+  const policeHaveAReference = state.tick > state.policeLagTicks
+  if (policeHaveAReference && state.policeLane >= state.player.lane) {
     return finalize(state, 'caught')
   }
 
