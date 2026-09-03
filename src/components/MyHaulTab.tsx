@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { theme } from '@/design/theme'
 import type { ItemKey } from '@/game/heistRun'
 import { getHaul, type HaulCounts } from '@/game/haulStore'
+import { getStats } from '@/game/profile'
 import PixelIcon from './PixelIcon'
 
 const pal = theme.palette
@@ -20,7 +21,11 @@ const ITEMS: { key: ItemKey; name: string; rarity: string; effect: string }[] = 
 
 export default function MyHaulTab() {
   const [counts, setCounts] = useState<HaulCounts | null>(null)
-  useEffect(() => { setCounts(getHaul()) }, [])
+  const [paintings, setPaintings] = useState(0)
+  useEffect(() => {
+    setCounts(getHaul())
+    setPaintings(getStats().paintingsStolen)
+  }, [])
 
   return (
     <div style={{ fontFamily: theme.type.family, color: pal.pale, fontSize: BODY, lineHeight: theme.type.lineHeight.read }}>
@@ -32,7 +37,27 @@ export default function MyHaulTab() {
         implies a value, a price, or a date.
       </p>
 
-      <h3 style={{ color: pal.amber, marginTop: 12, fontSize: BODY, fontWeight: 700 }}>The collection</h3>
+      <h3 style={{ color: pal.amber, marginTop: 12, fontSize: BODY, fontWeight: 700 }}>Paintings</h3>
+      {paintings === 0 ? (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${pal.chrome}` }}>
+          <QuestionSlot />
+          <div style={{ flex: 1, color: pal.steelLt }}>none kept yet</div>
+        </div>
+      ) : (
+        Array.from({ length: paintings }).map((_, i) => (
+          <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${pal.chrome}` }}>
+            <QuestionSlot />
+            <div style={{ flex: 1 }}>Unidentified piece #{i + 1}</div>
+            <span style={{ color: pal.gold, fontSize: FEED }}>COMING SOON</span>
+          </div>
+        ))
+      )}
+      <p style={{ color: pal.concrete, fontSize: FEED, marginTop: 4 }}>
+        What you actually took stays unrevealed until this ships for real — a
+        rare drop, not a common one.
+      </p>
+
+      <h3 style={{ color: pal.amber, marginTop: 16, fontSize: BODY, fontWeight: 700 }}>The collection</h3>
       {ITEMS.map((item) => {
         const count = counts?.[item.key] ?? 0
         return (
@@ -62,5 +87,26 @@ export default function MyHaulTab() {
         )
       })}
     </div>
+  )
+}
+
+function QuestionSlot() {
+  return (
+    <span
+      style={{
+        width: 22,
+        height: 22,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: pal.chrome,
+        color: pal.concrete,
+        flexShrink: 0,
+        fontSize: BODY,
+        fontWeight: 700,
+      }}
+    >
+      ?
+    </span>
   )
 }

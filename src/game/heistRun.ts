@@ -5,6 +5,7 @@
 // brief); this is what actually drives the Play/Demo canvas, because that
 // prototype is the approved reference and must not be redesigned.
 import { COPS, COP_W, ENV, HANDS as HAND_STATE, HELD, ICONS, PAL, POSES, VEHICLES } from '@/design/sprite-data'
+import { rollPaintingDrop } from './paintingStore'
 
 export const SCALE = 3
 export const W = 226
@@ -64,6 +65,11 @@ export type RunState = {
   timeLeft: number
   outcome: 'collared' | 'flattened' | 'timeout'
   heldItem: ItemKey | null
+  // Rolled the moment the wallet is picked up, revealed only at the end of
+  // the run (design brief: "contents revealed only at the end"). Nominal
+  // play-money points, not a real amount — there is no payment system yet.
+  walletOutcome: 'nothing' | 'refund' | 'double' | null
+  walletAmount: number
 }
 
 export type AlertInfo = { text: string | null; level: number; critical: boolean }
@@ -72,7 +78,7 @@ export type AlertInfo = { text: string | null; level: number; critical: boolean 
 export type LoggedInput = { tick: number; key: string; atMs: number }
 
 export class HeistRun {
-  state: RunState = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, outcome: 'collared', heldItem: null }
+  state: RunState = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, outcome: 'collared', heldItem: null, walletOutcome: null, walletAmount: 0 }
   // No seed here — this is the ported prototype's Math.random() world, not
   // the seed-deterministic engine (see CALIBRATION.md). runId identifies a
   // run for telemetry/export purposes only, not for replay.
@@ -264,7 +270,7 @@ export class HeistRun {
     this.ms = 0
     this.lostAt = -1
     this.tick = 0
-    this.state = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, outcome: 'collared', heldItem: null }
+    this.state = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, outcome: 'collared', heldItem: null, walletOutcome: null, walletAmount: 0 }
   }
 
   private stopX(index: number): number { return ((index * 67) % (W - 80)) + 8 }
@@ -273,11 +279,15 @@ export class HeistRun {
   private rollLoot(): void {
     const stops = this.bands.map((b, i) => (b.k === 'stop' ? i : -1)).filter((i) => i >= 0)
     const plan: Record<number, string> = {}
-    ;(['wallet', 'painting'] as const).forEach((item) => {
-      if (Math.random() >= 0.55 || !stops.length) return
+    if (Math.random() < 0.55 && stops.length) {
       const idx = stops.splice(Math.floor(Math.random() * stops.length), 1)[0]
-      plan[idx] = item
-    })
+      plan[idx] = 'wallet'
+    }
+    // The painting is the NFT drop — rare on purpose, see paintingStore.ts.
+    if (stops.length && rollPaintingDrop()) {
+      const idx = stops.splice(Math.floor(Math.random() * stops.length), 1)[0]
+      plan[idx] = 'painting'
+    }
     this.lootPlan = plan
   }
 
@@ -351,7 +361,14 @@ export class HeistRun {
       const taken = { ...this.state.taken, [loot]: true }
       const has = (n: string) => taken[n]
       const hands: Hands = has('wallet') && has('painting') ? 'both' : has('wallet') ? 'wallet' : 'painting'
-      this.state = { ...this.state, taken, hands }
+      let { walletOutcome, walletAmount } = this.state
+      if (loot === 'wallet') {
+        // Rolled now, revealed only at the end of the run.
+        const roll = Math.random()
+        walletOutcome = roll < 0.45 ? 'nothing' : roll < 0.88 ? 'refund' : 'double'
+        walletAmount = 10 + Math.floor(Math.random() * 41) // 10-50, nominal points
+      }
+      this.state = { ...this.state, taken, hands, walletOutcome, walletAmount }
     }
     const item = this.itemAt(this.bi)
     if (item && Math.abs((this.tx + 11) - (this.itemX(this.bi) + 4)) <= 14) {
@@ -446,7 +463,7 @@ export class HeistRun {
   escapeNow(): void {
     if (this.state.crossed >= ESCAPE_AT && this.live()) {
       this.usedItemsThisRun = []
-      this.state = { ...this.state, mode: 'paid', taken: {}, hands: 'ticket', heldItem: null }
+      this.state = { ...this.state, mode: 'paid', taken: {}, hands: 'ticket', heldItem: null, walletOutcome: null, walletAmount: 0 }
     }
   }
 

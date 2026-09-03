@@ -6,6 +6,7 @@ import { ESCAPE_AT, H, HeistRun, SCALE, TICK_MS, W, type ItemKey, type Mode } fr
 import { postFeedEvent } from '@/game/feedBus'
 import { exportDemoLogAsFile, getDemoLog, recordDemoRun } from '@/game/demoLog'
 import { recordItemEarned } from '@/game/haulStore'
+import { getUsername, recordGameResult, recordTicketWon } from '@/game/profile'
 import type { EventType } from '@/design/lines'
 import PixelIcon from './PixelIcon'
 import ResponsiveScale from './ResponsiveScale'
@@ -55,7 +56,7 @@ function reportResult(name: string, mode: Mode, outcome: 'collared' | 'flattened
 export default function HeistGame({ demo = false }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const runRef = useRef<HeistRun>(new HeistRun())
-  const nameRef = useRef<string>(`guest${Math.floor(Math.random() * 900 + 100)}`)
+  const nameRef = useRef<string>(getUsername() ?? `guest${Math.floor(Math.random() * 900 + 100)}`)
   const reportedRef = useRef(false)
   const [hud, setHud] = useState(() => snapshot(runRef.current))
   const [loggedRuns, setLoggedRuns] = useState(0)
@@ -99,6 +100,15 @@ export default function HeistGame({ demo = false }: Props) {
         if (run.state.mode === 'paid') {
           const earned = [...run.usedItemsThisRun, ...(run.state.heldItem ? [run.state.heldItem] : [])]
           earned.forEach(recordItemEarned)
+        }
+        if (!demo) {
+          recordGameResult({
+            crossings: run.state.crossed,
+            walletKept: run.state.mode === 'paid' && (run.state.hands === 'wallet' || run.state.hands === 'both'),
+            walletPayout: run.state.walletOutcome === 'nothing' ? 0 : run.state.walletOutcome === 'refund' ? run.state.walletAmount : run.state.walletOutcome === 'double' ? run.state.walletAmount * 2 : 0,
+            paintingKept: run.state.mode === 'paid' && (run.state.hands === 'painting' || run.state.hands === 'both'),
+          })
+          if (run.state.mode === 'paid') recordTicketWon()
         }
         if (demo) {
           const total = recordDemoRun({
@@ -195,6 +205,16 @@ export default function HeistGame({ demo = false }: Props) {
               {hud.mode === 'paid' ? 'THE CRIME PAID' : "CRIME DOESN'T PAY"}
             </div>
             <div style={{ fontSize: theme.type.size.body }}>{hud.crossed} crossings — {REASON_LABEL[hud.mode === 'paid' ? 'paid' : hud.outcome]}</div>
+            {hud.mode === 'paid' && hud.walletOutcome && (hud.hands === 'wallet' || hud.hands === 'both') && (
+              <div style={{ fontSize: theme.type.size.feed, color: theme.palette.concrete }}>
+                {hud.walletOutcome === 'nothing' && 'the wallet was empty'}
+                {hud.walletOutcome === 'refund' && `the wallet had ${hud.walletAmount} points`}
+                {hud.walletOutcome === 'double' && `the wallet had ${hud.walletAmount * 2} points — double`}
+              </div>
+            )}
+            {hud.mode === 'paid' && (hud.hands === 'painting' || hud.hands === 'both') && (
+              <div style={{ fontSize: theme.type.size.feed, color: theme.palette.gold }}>a painting, kept — see MY HAUL</div>
+            )}
             <button onClick={restart} style={buttonStyle}>RUN AGAIN</button>
           </div>
         )}
@@ -260,6 +280,8 @@ function snapshot(run: HeistRun) {
     soundOn: run.soundOn,
     heldItem: run.state.heldItem,
     effectBanner: run.itemEffectBanner && run.tick < run.itemEffectBanner.untilTick ? run.itemEffectBanner.item : null,
+    walletOutcome: run.state.walletOutcome,
+    walletAmount: run.state.walletAmount,
   }
 }
 

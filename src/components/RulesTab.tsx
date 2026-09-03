@@ -11,10 +11,18 @@ export default function RulesTab() {
       <p>Cross traffic for {DURATION_S} seconds. {ESCAPE_AT} crossings arms the door — escape and you keep the ticket, not what you&apos;re carrying. Survive the clock with the door armed and you keep both. Short of {ESCAPE_AT}, get caught, or lose all {LIVES_MAX} hearts, and you keep nothing.</p>
 
       <h3 style={{ color: pal.amber, marginTop: 12, fontSize: theme.type.size.body, fontWeight: 700 }}>Wallet odds</h3>
-      <p style={{ color: pal.concrete }}>Planned, not live yet — a wallet only tells you whether you got one, not what was in it:</p>
+      <p style={{ color: pal.concrete }}>Points, not real money — there is no payment system yet. Revealed only at the end of the run:</p>
       <div style={row}><span>Nothing</span><span>45%</span></div>
       <div style={row}><span>Refund</span><span>43%</span></div>
       <div style={row}><span>Double</span><span>11%</span></div>
+
+      <h3 style={{ color: pal.amber, marginTop: 12, fontSize: theme.type.size.body, fontWeight: 700 }}>The painting</h3>
+      <p style={{ color: pal.concrete }}>
+        The NFT drop — genuinely rare, roughly one every 50 to 150 games
+        across this browser (a real cross-player counter needs the phase-3
+        backend). What it actually is stays unrevealed — MY HAUL shows it as
+        a &quot;?&quot;, coming soon.
+      </p>
 
       <h3 style={{ color: pal.amber, marginTop: 12, fontSize: theme.type.size.body, fontWeight: 700 }}>Mystery items</h3>
       <p style={{ color: pal.concrete }}>
