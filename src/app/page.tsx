@@ -17,7 +17,6 @@ export default function Home() {
     <div style={{ paddingBottom: 64 }}>
       <WindowChrome active={tab} onChange={setTab}>
         {tab === 'play' && <HeistGame key="play" />}
-        {tab === 'demo' && <HeistGame key="demo" demo />}
         {tab === 'rules' && <RulesTab />}
         {tab === 'profile' && <ProfileTab />}
       </WindowChrome>

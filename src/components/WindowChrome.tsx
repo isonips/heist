@@ -4,11 +4,10 @@ import type { ReactNode } from 'react'
 import { theme } from '@/design/theme'
 import PixelIcon from './PixelIcon'
 
-export type TabId = 'play' | 'demo' | 'rules' | 'profile'
+export type TabId = 'play' | 'rules' | 'profile'
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'play', label: 'PLAY' },
-  { id: 'demo', label: 'DEMO' },
   { id: 'rules', label: 'RULES' },
   { id: 'profile', label: 'PROFILE' },
 ]

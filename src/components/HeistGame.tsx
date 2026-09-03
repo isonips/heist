@@ -12,8 +12,6 @@ import PixelIcon from './PixelIcon'
 import ResponsiveScale from './ResponsiveScale'
 import TouchControls, { type Dir as TouchDir } from './TouchControls'
 
-type Props = { demo?: boolean }
-
 const ITEM_LABEL: Record<ItemKey, string> = {
   oldMan: 'THE OLD MAN — TRAFFIC STOPS DEAD',
   pileUp: 'THE PILE-UP — A LANE IS BLOCKED',
@@ -53,7 +51,9 @@ function reportResult(name: string, mode: Mode, outcome: 'collared' | 'flattened
   postFeedEvent(type, tokens, true)
 }
 
-export default function HeistGame({ demo = false }: Props) {
+export default function HeistGame() {
+  const [mode, setMode] = useState<'play' | 'demo' | null>(null)
+  const demo = mode === 'demo'
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const runRef = useRef<HeistRun>(new HeistRun())
   const nameRef = useRef<string>(getUsername() ?? `guest${Math.floor(Math.random() * 900 + 100)}`)
@@ -147,6 +147,15 @@ export default function HeistGame({ demo = false }: Props) {
     mq.addEventListener('change', update)
     return () => mq.removeEventListener('change', update)
   }, [])
+
+  if (mode === null) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center', padding: '24px 0' }}>
+        <button onClick={() => setMode('play')} style={{ ...buttonStyle, width: 200, fontSize: theme.type.size.display, padding: '14px 0' }}>PLAY</button>
+        <button onClick={() => setMode('demo')} style={{ ...buttonStyle, width: 200, fontSize: theme.type.size.display, padding: '14px 0' }}>DEMO</button>
+      </div>
+    )
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
