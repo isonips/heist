@@ -1,0 +1,572 @@
+// A close port of the working prototype's game logic from
+// `HEIST - PLAY.dc.html` (the Claude Design handoff) — same world model,
+// same constants, same feel. Not the seed-deterministic engine in
+// src/engine/ (that's the separate Solidity-portable track from the code
+// brief); this is what actually drives the Play/Demo canvas, because that
+// prototype is the approved reference and must not be redesigned.
+import { COPS, COP_W, ENV, HANDS as HAND_STATE, HELD, ICONS, PAL, POSES, VEHICLES } from '@/design/sprite-data'
+
+export const SCALE = 3
+export const W = 226
+export const H = 196
+const SPACING = { car: 152, truck: 200 }
+const SAFE: Record<string, boolean> = { pave: true, stop: true }
+
+export const TRAFFIC_PX = 4
+export const POLICE_MAX_LEAD_S = 26
+export const REIN_FROM = 7
+export const REIN_LEAD_S = 20
+export const POLICE_PX = 1.4
+export const POLICE_HEAD_START_S: [number, number] = [12, 15]
+export const TICK_MS = 110
+export const ESCAPE_AT = 10
+export const LOOT_FROM = 6
+export const LIVES_MAX = 3
+export const DURATION_S = 60
+export const CAR_COLOURS = [
+  { body: 'B', shade: 'S', light: 'C' }, { body: 'R', shade: 'b', light: 'A' },
+  { body: 'C', shade: 's', light: 'P' }, { body: 'V', shade: 'K', light: 'l' },
+  { body: 'G', shade: 'a', light: 'W' }, { body: 'P', shade: 'C', light: 'W' },
+]
+const THIEF_X = 100
+const THIEF_SCREEN_Y = 118
+const BOTTOM_INSET = 2
+const HOP_STEP = 12
+
+export type Band = { k: string; h: number; dir?: number; spacing?: number; phase?: number; bottom: number; top: number }
+export type Vehicle = { x: number; w: number; kind: string; colour: { body: string; shade: string; light: string } }
+export type Mode = 'run' | 'police' | 'hit' | 'armed' | 'caught' | 'paid' | 'lost' | 'mobile'
+export type Hands = 'ticket' | 'wallet' | 'painting' | 'both' | 'empty'
+export type Dir = 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight'
+
+export type RunState = {
+  mode: Mode
+  hands: Hands
+  crossed: number
+  taken: Record<string, boolean>
+  lives: number
+  blink: number
+  timeLeft: number
+  outcome: 'collared' | 'flattened'
+}
+
+export type AlertInfo = { text: string | null; level: number; critical: boolean }
+
+/** Fresh six-section world, tiled endlessly — see buildWorld() below. */
+export class HeistRun {
+  state: RunState = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, outcome: 'collared' }
+  tick = 0
+  bands: Band[] = []
+  world = 0
+  wy = 0
+  policeWy = 0
+  tx = THIEF_X
+  bi = 0
+  lap = 0
+  hopTo: number | null = null
+  dirV = 1
+  pendingBi = 0
+  pendingLap = 0
+  trafficOff = 0
+  clearTicks = 99
+  wasCovered = false
+  started = false
+  ms = 0
+  headStart = 0
+  lootPlan: Record<number, string> = {}
+  furn: Record<number, { kind: string; x: number }[]> = {}
+  rein: { t: number; x: number; wy: number; phase: 'in' | 'stop' | 'out' } | null = null
+  reinDone = false
+  reinBanner = 0
+  lostAt = -1
+  alertMsg: string | null = null
+  alertLevel = -1
+  critical = false
+  private alertBags: Record<string, string[]> = {}
+
+  constructor() {
+    this.newRun()
+  }
+
+  live(): boolean {
+    const m = this.state.mode
+    return m === 'run' || m === 'police' || m === 'armed' || m === 'mobile'
+  }
+
+  lives(): number {
+    return this.state.mode === 'lost' ? 0 : this.state.mode === 'hit' ? 2 : this.state.lives
+  }
+
+  // -------------------------------------------------------------- world
+  private buildWorld(): void {
+    const out: Band[] = [{ k: 'pave', h: 28, bottom: 0, top: 0 }]
+    for (let s = 0; s < 6; s++) {
+      const lanes = 1 + Math.floor(Math.random() * 4)
+      const truckAt = Math.random() < 0.45 ? Math.floor(Math.random() * lanes) : -1
+      const d0 = Math.random() < 0.5 ? 1 : -1
+      const wider = 1 + 0.1 * (lanes - 1)
+      for (let n = 0; n < lanes; n++) {
+        const isTruck = n === truckAt
+        const spacing = Math.round((isTruck ? SPACING.truck : SPACING.car) * wider)
+        out.push({
+          k: isTruck ? 'truck' : 'car',
+          h: isTruck ? 32 : 24,
+          dir: n % 2 === 0 ? d0 : -d0,
+          spacing,
+          phase: Math.round(Math.random() * spacing),
+          bottom: 0,
+          top: 0,
+        })
+      }
+      if (s < 5) out.push({ k: s % 2 === 0 ? 'stop' : 'pave', h: 28, bottom: 0, top: 0 })
+    }
+    let acc = 0
+    out.forEach((b) => { b.bottom = acc; acc += b.h; b.top = acc })
+    this.bands = out
+    this.world = acc
+  }
+
+  newRun(): void {
+    this.buildWorld()
+    this.rollLoot()
+    this.rollFurniture()
+    this.rein = null
+    this.reinDone = false
+    this.reinBanner = 0
+    this.wy = this.bands[0].bottom
+    this.bi = 0
+    this.lap = 0
+    this.tx = THIEF_X
+    this.alertBags = {}
+    this.alertMsg = null
+    this.alertLevel = -1
+    this.critical = false
+    const head = POLICE_HEAD_START_S[0] + Math.random() * (POLICE_HEAD_START_S[1] - POLICE_HEAD_START_S[0])
+    this.headStart = head
+    this.policeWy = this.bands[0].bottom - (head * (POLICE_PX * 1000 / TICK_MS) + 26)
+    this.hopTo = null
+    this.trafficOff = 0
+    this.wasCovered = false
+    this.clearTicks = 99
+    this.started = false
+    this.ms = 0
+    this.lostAt = -1
+    this.tick = 0
+    this.state = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, outcome: 'collared' }
+  }
+
+  private stopX(index: number): number { return ((index * 67) % (W - 80)) + 8 }
+  private lootX(index: number): number { return this.stopX(index) + 44 }
+
+  private rollLoot(): void {
+    const stops = this.bands.map((b, i) => (b.k === 'stop' ? i : -1)).filter((i) => i >= 0)
+    const plan: Record<number, string> = {}
+    ;(['wallet', 'painting'] as const).forEach((item) => {
+      if (Math.random() >= 0.55 || !stops.length) return
+      const idx = stops.splice(Math.floor(Math.random() * stops.length), 1)[0]
+      plan[idx] = item
+    })
+    this.lootPlan = plan
+  }
+
+  private rollFurniture(): void {
+    const KINDS = ['tree', 'tree', 'bin', 'bollard', 'busStop']
+    const f: Record<number, { kind: string; x: number }[]> = {}
+    this.bands.forEach((band, i) => {
+      if (band.k !== 'pave' && band.k !== 'stop') return
+      const list: { kind: string; x: number }[] = []
+      const slots = [4, 58, 112, 164].sort(() => Math.random() - 0.5)
+      const count = band.k === 'stop' ? 1 : (Math.random() < 0.65 ? 2 : 1)
+      for (let s = 0; s < count; s++) {
+        let kind = KINDS[Math.floor(Math.random() * KINDS.length)]
+        if (band.k === 'stop' && kind === 'busStop') kind = 'bin'
+        const art = ENV[kind as keyof typeof ENV]
+        if (art.h > band.h + 8) continue
+        const x = slots[s] + Math.floor(Math.random() * 14)
+        if (x + art.w > W - 2) continue
+        if (band.k === 'stop') {
+          const sx = this.stopX(i)
+          if (x + art.w > sx - 4 && x < sx + ENV.busStop.w + 26) continue
+        }
+        list.push({ kind, x })
+      }
+      f[i] = list
+    })
+    this.furn = f
+  }
+
+  private lootAt(index: number): string | null {
+    const item = this.lootPlan[index]
+    if (!item || this.state.crossed < LOOT_FROM || this.state.taken[item]) return null
+    return item
+  }
+
+  private pickUp(): void {
+    const band = this.bands[this.bi]
+    const loot = this.lootAt(this.bi)
+    if (band.k !== 'stop' || !loot) return
+    if (Math.abs((this.tx + 11) - (this.lootX(this.bi) + 4)) > 14) return
+    const taken = { ...this.state.taken, [loot]: true }
+    const has = (n: string) => taken[n]
+    const hands: Hands = has('wallet') && has('painting') ? 'both' : has('wallet') ? 'wallet' : 'painting'
+    this.state = { ...this.state, taken, hands }
+  }
+
+  // ------------------------------------------------------------- traffic
+  trafficPx(): number { return TRAFFIC_PX + Math.min(3, Math.floor(this.state.crossed / 3)) }
+
+  vehiclesIn(index: number): Vehicle[] {
+    const band = this.bands[index]
+    if (band.k !== 'car' && band.k !== 'truck') return []
+    const sp = band.spacing || SPACING[band.k as 'car' | 'truck']
+    const w = band.k === 'car' ? 48 : 68
+    const off = (band.phase || 0) + this.trafficOff * (band.dir ?? 1)
+    const out: Vehicle[] = []
+    const nMin = Math.ceil((-80 - off) / sp)
+    const nMax = Math.floor((W + 80 - off) / sp)
+    for (let n = nMin; n <= nMax; n++) {
+      const id = ((index * 5 + n) % CAR_COLOURS.length + CAR_COLOURS.length) % CAR_COLOURS.length
+      out.push({ x: off + n * sp, w, kind: band.k, colour: CAR_COLOURS[id] })
+    }
+    return out
+  }
+
+  private covered(): boolean {
+    const band = this.bands[this.bi]
+    if (band.k !== 'car' && band.k !== 'truck') return false
+    const lo = this.tx + 2, hi = this.tx + 20
+    return this.vehiclesIn(this.bi).some((v) => v.x < hi && v.x + v.w > lo)
+  }
+
+  // --------------------------------------------------------------- input
+  onKey(key: string): void {
+    if (!this.live()) return
+    this.started = true
+    if (key !== 'ArrowUp' && key !== 'ArrowDown' && key !== 'ArrowLeft' && key !== 'ArrowRight') return
+    if (key === 'ArrowLeft') { this.tx = Math.max(2, this.tx - 6); return }
+    if (key === 'ArrowRight') { this.tx = Math.min(W - 24, this.tx + 6); return }
+    if (this.hopTo !== null) return
+    if (key === 'ArrowUp') {
+      this.dirV = 1
+      this.hopTo = this.lap + this.bands[this.bi].top
+    } else {
+      const first = this.bi === 0
+      const prev = first ? this.bands.length - 1 : this.bi - 1
+      this.dirV = -1
+      this.pendingBi = prev
+      this.pendingLap = first ? this.lap - this.world : this.lap
+      this.hopTo = this.wy - this.bands[prev].h
+    }
+  }
+
+  escapeNow(): void {
+    if (this.state.crossed >= ESCAPE_AT && this.live()) this.state = { ...this.state, mode: 'paid' }
+  }
+
+  // ------------------------------------------------------------ per-tick
+  private step(): void {
+    if (this.hopTo === null) { this.pickUp(); return }
+    this.wy += this.dirV * HOP_STEP
+    if (this.dirV > 0 && this.wy >= this.hopTo) {
+      this.wy = this.hopTo
+      this.hopTo = null
+      const left = this.bands[this.bi].k
+      if (this.bi === this.bands.length - 1) { this.bi = 0; this.lap += this.world }
+      else this.bi += 1
+      if (SAFE[this.bands[this.bi].k] && !SAFE[left]) this.state = { ...this.state, crossed: this.state.crossed + 1 }
+      this.pickUp()
+    } else if (this.dirV < 0 && this.wy <= this.hopTo) {
+      this.wy = this.hopTo
+      this.hopTo = null
+      const left = this.bands[this.bi].k
+      this.bi = this.pendingBi
+      this.lap = this.pendingLap
+      if (SAFE[this.bands[this.bi].k] && !SAFE[left]) this.state = { ...this.state, crossed: Math.max(0, this.state.crossed - 1) }
+    }
+  }
+
+  private collide(): void {
+    const cov = this.covered()
+    if (!cov) this.clearTicks += 1
+    if (cov && this.clearTicks >= 3) {
+      this.clearTicks = 0
+      const lives = Math.max(0, this.state.lives - 1)
+      const next: Partial<RunState> = { lives, blink: 10 }
+      if (lives === 0) { next.mode = 'lost'; next.outcome = 'flattened' }
+      this.state = { ...this.state, ...next }
+    }
+    if (cov) this.clearTicks = 0
+    this.wasCovered = cov
+    if (this.state.blink > 0 && this.state.lives > 0 && this.state.mode !== 'lost') {
+      this.state = { ...this.state, blink: Math.max(0, this.state.blink - 1) }
+    }
+  }
+
+  secsToArrest(): number {
+    const perSec = POLICE_PX * 1000 / TICK_MS
+    return Math.max(0, (this.wy - this.policeWy - 26) / perSec)
+  }
+
+  private law(): void {
+    if (!this.live() || !this.started) return
+    const lead = this.secsToArrest()
+    const push = lead > POLICE_MAX_LEAD_S ? 2.6 : lead > 18 ? 1.6 : 1
+    this.policeWy += POLICE_PX * push
+    if (this.policeWy + 26 >= this.wy) {
+      this.state = { ...this.state, mode: 'caught', outcome: 'collared' }
+      this.lostAt = this.tick + Math.round(1600 / TICK_MS)
+    }
+  }
+
+  private reinforce(): void {
+    if (!this.live() || !this.started) return
+    const r = this.rein
+    if (!r) {
+      if (this.reinDone || this.state.crossed < REIN_FROM) return
+      if (this.secsToArrest() <= REIN_LEAD_S) return
+      const scroll = this.wy - (H - THIEF_SCREEN_Y)
+      this.rein = { t: 0, x: -70, wy: scroll + 22, phase: 'in' }
+      return
+    }
+    r.t++
+    if (r.phase === 'in') {
+      r.x = Math.min(72, r.x + 16)
+      if (r.x >= 72) { r.phase = 'stop'; r.t = 0 }
+    } else if (r.phase === 'stop' && r.t > 12) {
+      r.phase = 'out'
+      this.policeWy = r.wy
+      this.reinDone = true
+      this.reinBanner = 26
+    }
+  }
+
+  private clock(): void {
+    if (!this.live() || !this.started) return
+    this.ms += TICK_MS
+    if (this.ms < 1000) return
+    this.ms -= 1000
+    const t = this.state.timeLeft - 1
+    this.state = t <= 0 ? { ...this.state, timeLeft: 0, mode: 'paid' } : { ...this.state, timeLeft: t }
+  }
+
+  private drawBag(band: 'far' | 'mid' | 'near' | 'relief' | 'critical'): string {
+    const ALERTS: Record<string, string[]> = {
+      far: ['YOU CAN HEAR THE SIRENS', "THEY'RE ON YOUR TRAIL", 'THE POLICE ARE BACK THERE SOMEWHERE', 'SIRENS, A COUPLE OF STREETS BACK', 'THE COPS HAVE YOUR SCENT', 'SOMETHING BLUE IN THE MIRROR'],
+      mid: ['THE GAP IS CLOSING', 'THE SIRENS ARE GETTING LOUDER', 'THE COPS ARE CLOSING THE GAP', 'THE POLICE ARE CLOSING IN', 'THEY ARE GAINING ON YOU', 'THAT SIREN IS NOT GETTING QUIETER', 'THEY ARE COMING UP FAST'],
+      near: ['THE POLICE ARE ALMOST ON YOU', 'THE COPS ARE SECONDS AWAY', 'ONLY A FEW METRES NOW', 'YOU CAN SEE THE LIGHTS ON THE ROAD', 'MOVE. THEY ARE ON YOU'],
+      relief: ["YOU'RE PULLING AWAY", 'THE COPS ARE FALLING BEHIND', "YOU'VE GOT SOME DISTANCE", 'THE GAP IS OPENING'],
+      critical: ["THEY'RE RIGHT BEHIND YOU", 'THEY ARE ON YOUR HEELS', 'HANDS OFF THE ROAD, THEY HAVE YOU IN SIGHT'],
+    }
+    if (!this.alertBags[band] || !this.alertBags[band].length) this.alertBags[band] = ALERTS[band].slice()
+    const bag = this.alertBags[band]
+    return bag.splice(Math.floor(Math.random() * bag.length), 1)[0]
+  }
+
+  private alerts(): void {
+    if (!this.live() || !this.started) { this.alertMsg = null; this.alertLevel = -1; this.critical = false; return }
+    const s = this.secsToArrest()
+    if (this.reinBanner > 0) {
+      this.alertMsg = 'A CRUISER JUST CUT IN'
+      this.alertLevel = 4
+      this.critical = true
+      return
+    }
+    this.critical = s <= 3.4
+    const level = s <= 6.5 ? 3 : s <= 13 ? 2 : 1
+    this.alertLevel = level
+    if (this.tick % 20 === 0 || !this.alertMsg) {
+      const band = this.critical ? 'critical' : level === 3 ? 'near' : level === 2 ? 'mid' : 'far'
+      this.alertMsg = this.drawBag(band)
+    }
+  }
+
+  /** One full tick: input has already been applied via onKey(). */
+  advance(): void {
+    this.tick++
+    this.step()
+    if (this.live()) this.collide()
+    this.trafficOff += this.trafficPx()
+    this.law()
+    this.reinforce()
+    this.clock()
+    this.alerts()
+    if (this.state.mode === 'caught' && this.lostAt >= 0 && this.tick >= this.lostAt) {
+      this.state = { ...this.state, mode: 'lost' }
+      this.lostAt = -1
+    }
+  }
+
+  // -------------------------------------------------------------- draw
+  private cell(ctx: CanvasRenderingContext2D, rows: string[], px: number, py: number, opts?: { body?: string; shade?: string; light?: string; flip?: boolean; mode?: 'flash' }) {
+    const o = opts || {}
+    for (let y = 0; y < rows.length; y++) {
+      for (let x = 0; x < rows[y].length; x++) {
+        let ch = rows[y][x]
+        if (ch === '.' || ch === ' ') continue
+        if (o.body && ch === 'A') ch = o.body
+        else if (o.shade && ch === 'a') ch = o.shade
+        else if (ch === 'L') ch = o.light || (o.body ? o.body : 'L')
+        let hex = PAL[ch]
+        if (!hex) continue
+        if (o.mode === 'flash') hex = (ch === 'W' || ch === 'P' || ch === 'G') ? PAL.K : PAL.P
+        const dx = o.flip ? (rows[y].length - 1 - x) : x
+        ctx.fillStyle = hex
+        ctx.fillRect(px + dx, py + y, 1, 1)
+      }
+    }
+  }
+
+  private shadow(ctx: CanvasRenderingContext2D, x: number, w: number, groundY: number, kind: 'solid' | 'dither50') {
+    ctx.fillStyle = PAL.K
+    if (kind === 'solid') { ctx.fillRect(x + 1, groundY - 1, w - 2, 2); return }
+    for (let yy = 0; yy < 2; yy++) for (let xx = 1; xx < w - 1; xx++) {
+      if ((xx + yy) % 2) continue
+      ctx.fillRect(x + xx, groundY - 1 + yy, 1, 1)
+    }
+  }
+
+  private thiefRows(poseOverride?: string): string[] {
+    const m = this.state.mode
+    const cycle = this.hopTo !== null ? (['tuck', 'splay', 'tuck', 'walk2'] as const)[this.tick % 4] : 'stand'
+    const pose = poseOverride || ((m === 'caught' || m === 'lost') ? 'caught' : m === 'hit' ? 'hit' : cycle)
+    const rows = POSES[pose].map((r) => r.split(''))
+    const hands: Hands = (m === 'lost' || pose === 'hit') ? 'empty' : this.state.hands
+    ;(HAND_STATE[hands] || []).forEach((n: string) => {
+      const layer = HELD[n as keyof typeof HELD]
+      for (let y = 0; y < layer.length; y++) for (let x = 0; x < layer[y].length; x++) {
+        if (layer[y][x] !== '.') rows[y][x] = layer[y][x]
+      }
+    })
+    return rows.map((r) => r.join(''))
+  }
+
+  private asphalt(ctx: CanvasRenderingContext2D, y: number, h: number, wb: number) {
+    ctx.fillStyle = PAL.T; ctx.fillRect(-40, y, W + 80, h)
+    ctx.fillStyle = PAL.j
+    for (let i = 0; i < 3; i++) {
+      const pw = 18 + ((wb + i * 7) % 26)
+      const ph = Math.max(3, Math.min(h - 5, 4 + ((wb * 3 + i) % 6)))
+      const px = ((wb * 37 + i * 613) % (W + 40)) - 40
+      const py = y + 2 + ((wb * 5 + i * 11) % Math.max(1, h - ph - 4))
+      ctx.fillRect(px, py, pw, ph)
+    }
+    ctx.fillStyle = PAL.n
+    for (let yy = 1; yy < h - 2; yy += 3) {
+      const off = ((wb + yy) * 7) % 9
+      for (let x = -40 + off; x < W + 40; x += 9) ctx.fillRect(x, y + yy, 1, 1)
+    }
+  }
+
+  private pavement(ctx: CanvasRenderingContext2D, y: number, h: number) {
+    ctx.fillStyle = PAL.C; ctx.fillRect(-40, y, W + 80, h)
+    ctx.fillStyle = PAL.d
+    for (let x = -40; x < W + 40; x += 16) ctx.fillRect(x, y + 6, 1, h - 6)
+    ctx.fillStyle = PAL.e
+    for (let x = -40; x < W + 40; x += 16) ctx.fillRect(x + 1, y + 6, 1, h - 6)
+    ctx.fillStyle = PAL.d; ctx.fillRect(-40, y + 6 + Math.floor((h - 6) / 2), W + 80, 1)
+    ctx.fillStyle = PAL.s; ctx.fillRect(-40, y, W + 80, 4)
+    ctx.fillStyle = PAL.e; ctx.fillRect(-40, y + 4, W + 80, 2)
+    ctx.fillStyle = PAL.K; ctx.fillRect(-40, y, W + 80, 1)
+  }
+
+  draw(ctx: CanvasRenderingContext2D): void {
+    ctx.fillStyle = PAL.T; ctx.fillRect(-40, 0, W + 80, H)
+
+    const scroll = this.wy - (H - THIEF_SCREEN_Y)
+    const screenTop = (worldY: number) => H - (worldY - scroll)
+    const pad = (rows: string[], w: number) => rows.map((r) => r + '.'.repeat(Math.max(0, w - r.length)))
+
+    const base = Math.floor(scroll / this.world)
+    for (let m = base; m <= base + 2; m++) {
+      this.bands.forEach((band, i) => {
+        const bottom = band.bottom + m * this.world
+        const y = screenTop(bottom + band.h)
+        if (y > H || y + band.h < 0) return
+
+        if (band.k === 'pave' || band.k === 'stop') this.pavement(ctx, y, band.h)
+        else this.asphalt(ctx, y, band.h, band.bottom)
+
+        const below = this.bands[(i - 1 + this.bands.length) % this.bands.length]
+        const roadRoad = (band.k === 'car' || band.k === 'truck') && (below.k === 'car' || below.k === 'truck')
+        const gy = y + band.h - 1
+        if (roadRoad) {
+          ctx.fillStyle = PAL.C
+          for (let x = -40; x < W + 40; x += 12) ctx.fillRect(x, gy - 1, 6, 2)
+        } else {
+          ctx.fillStyle = PAL.P; ctx.fillRect(-40, gy - 1, W + 80, 2)
+        }
+
+        if (band.k === 'stop') {
+          const sx = this.stopX(i)
+          this.cell(ctx, pad(ENV.busStop.rows, ENV.busStop.w), sx, y + band.h - ENV.busStop.h)
+          this.cell(ctx, pad(ENV.bystander.rows, ENV.bystander.w), sx + 30, y + band.h - ENV.bystander.h)
+          const loot = this.lootAt(i)
+          if (loot) {
+            const lx = this.lootX(i), ly = y + band.h - 10
+            ctx.fillStyle = PAL.K; ctx.fillRect(lx - 1, ly - 1, 10, 10)
+            this.cell(ctx, ICONS[loot as keyof typeof ICONS], lx, ly)
+            if (this.tick % 2 === 0) { ctx.fillStyle = PAL.W; ctx.fillRect(lx + 8, ly - 1, 1, 1) }
+          }
+        }
+        ;(this.furn[i] || []).forEach((p) => {
+          const art = ENV[p.kind as keyof typeof ENV]
+          this.cell(ctx, pad(art.rows, art.w), p.x, y + band.h - art.h)
+        })
+
+        this.vehiclesIn(i).forEach((v) => {
+          const veh = VEHICLES[v.kind as keyof typeof VEHICLES]
+          const ground = y + band.h - BOTTOM_INSET
+          this.shadow(ctx, v.x, veh.w, ground, 'solid')
+          this.cell(ctx, veh.rows, v.x, ground - veh.h, { body: v.colour.body, shade: v.colour.shade, light: v.colour.light, flip: (band.dir ?? 1) < 0 })
+        })
+      })
+    }
+
+    const py = screenTop(this.policeWy)
+    if (py > -30 && py < H + 30) {
+      ;[40, 116].forEach((px, i) => {
+        this.shadow(ctx, px, COP_W, py, 'dither50')
+        this.cell(ctx, COPS[(this.tick + i) % 2], px, py - 22)
+      })
+    }
+
+    if (this.rein) {
+      const car = VEHICLES[this.tick % 2 ? 'police_a' : 'police_b']
+      const ry = screenTop(this.rein.wy)
+      if (ry > -40 && ry < H + 40) {
+        this.shadow(ctx, this.rein.x, car.w, ry, 'solid')
+        this.cell(ctx, car.rows, this.rein.x, ry - car.h, { light: 'W' })
+      }
+    }
+
+    if (this.live() && this.started && this.alertLevel > 0 && this.alertLevel < 4) {
+      const th2 = [0, 3, 5, 8][this.alertLevel]
+      ctx.fillStyle = this.tick % 2 ? PAL.B : PAL.R
+      for (let x = -40; x < W + 40; x += 16) ctx.fillRect(x, H - th2, 8, th2)
+    }
+
+    const feet = screenTop(this.wy)
+    this.shadow(ctx, this.tx + 4, 14, feet, 'dither50')
+    const flash = ((this.state.mode === 'hit' || this.state.blink > 0) && this.tick % 2 === 0) ? 'flash' : undefined
+    this.cell(ctx, this.thiefRows(), this.tx, feet - 24, { mode: flash })
+
+    if (this.critical && this.live()) {
+      ctx.fillStyle = PAL.R
+      ctx.fillRect(-40, H - 10, W + 80, 10)
+      if (this.tick % 2 === 0) {
+        for (let y = 0; y < H; y++) for (let x = -40; x < W + 40; x++) {
+          if ((x * 3 + y * 5) % 11) continue
+          ctx.fillRect(x, y, 1, 1)
+        }
+      }
+    }
+
+    if (this.state.mode === 'caught') {
+      ctx.fillStyle = this.tick % 2 ? PAL.R : PAL.b
+      for (let y = 0; y < H; y++) for (let x = -40; x < W + 40; x++) {
+        if ((x + y) % 2) continue
+        ctx.fillRect(x, y, 1, 1)
+      }
+    }
+  }
+}

@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react'
 import { theme } from '@/design/theme'
-import { DURATION_S, GOAL, LIVES, REIN_FROM, REIN_LEAD_S } from '@/engine/constants'
+import { DURATION_S, ESCAPE_AT, LIVES_MAX, REIN_FROM, REIN_LEAD_S } from '@/game/heistRun'
 
 const pal = theme.palette
 const row: CSSProperties = { display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: `1px solid ${pal.chrome}` }
@@ -8,7 +8,7 @@ const row: CSSProperties = { display: 'flex', justifyContent: 'space-between', p
 export default function RulesTab() {
   return (
     <div style={{ fontFamily: theme.type.family, color: pal.pale, fontSize: 12, lineHeight: 1.6 }}>
-      <p>Cross traffic for {DURATION_S} seconds. {GOAL} crossings secures a ticket for the nightly draw. Get caught, or lose all {LIVES} hearts, and you keep nothing.</p>
+      <p>Cross traffic for {DURATION_S} seconds. {ESCAPE_AT} crossings arms the door out — or just survive the clock. Get caught, or lose all {LIVES_MAX} hearts, and you keep nothing.</p>
 
       <h3 style={{ color: pal.amber, marginTop: 12 }}>Wallet odds (revealed at the end of a run)</h3>
       <div style={row}><span>Nothing</span><span>45%</span></div>

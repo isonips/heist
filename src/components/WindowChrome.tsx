@@ -26,10 +26,11 @@ export default function WindowChrome({
   return (
     <div
       style={{
-        width: 'min(96vw, 420px)',
+        maxWidth: 720,
+        width: '96vw',
         margin: '32px auto',
-        border: `2px solid ${pal.ink}`,
-        boxShadow: `0 0 0 3px ${pal.pale} inset`,
+        border: `3px solid ${pal.white}`,
+        boxShadow: `0 0 0 2px ${pal.ink}, inset 0 0 0 1px ${pal.steel}`,
         background: pal.shade,
       }}
     >
