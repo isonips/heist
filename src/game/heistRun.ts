@@ -53,8 +53,16 @@ export type RunState = {
 export type AlertInfo = { text: string | null; level: number; critical: boolean }
 
 /** Fresh six-section world, tiled endlessly — see buildWorld() below. */
+export type LoggedInput = { tick: number; key: string; atMs: number }
+
 export class HeistRun {
   state: RunState = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, outcome: 'collared' }
+  // No seed here — this is the ported prototype's Math.random() world, not
+  // the seed-deterministic engine (see CALIBRATION.md). runId identifies a
+  // run for telemetry/export purposes only, not for replay.
+  runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  startedAtMs = Date.now()
+  inputLog: LoggedInput[] = []
   tick = 0
   bands: Band[] = []
   world = 0
@@ -322,8 +330,11 @@ export class HeistRun {
   // --------------------------------------------------------------- input
   onKey(key: string): void {
     if (!this.live()) return
-    this.started = true
     if (key !== 'ArrowUp' && key !== 'ArrowDown' && key !== 'ArrowLeft' && key !== 'ArrowRight') return
+    this.started = true
+    // Recorded even when the move below turns out to be a no-op (e.g. mid-hop) —
+    // per the code brief, an input is logged whether or not it changes anything.
+    this.inputLog.push({ tick: this.tick, key, atMs: Date.now() - this.startedAtMs })
     if (key === 'ArrowLeft') { this.tx = Math.max(2, this.tx - 6); return }
     if (key === 'ArrowRight') { this.tx = Math.min(W - 24, this.tx + 6); return }
     if (this.hopTo !== null) return

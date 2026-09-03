@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from 're
 import { theme } from '@/design/theme'
 import { ESCAPE_AT, H, HeistRun, SCALE, TICK_MS, W, type Mode } from '@/game/heistRun'
 import { postFeedEvent } from '@/game/feedBus'
+import { exportDemoLogAsFile, getDemoLog, recordDemoRun } from '@/game/demoLog'
 import type { EventType } from '@/design/lines'
 import PixelIcon from './PixelIcon'
 import ResponsiveScale from './ResponsiveScale'
@@ -48,6 +49,8 @@ export default function HeistGame({ demo = false }: Props) {
   const nameRef = useRef<string>(`guest${Math.floor(Math.random() * 900 + 100)}`)
   const reportedRef = useRef(false)
   const [hud, setHud] = useState(() => snapshot(runRef.current))
+  const [loggedRuns, setLoggedRuns] = useState(0)
+  useEffect(() => { if (demo) setLoggedRuns(getDemoLog().length) }, [demo])
 
   const restart = useCallback(() => {
     runRef.current = new HeistRun()
@@ -79,7 +82,20 @@ export default function HeistGame({ demo = false }: Props) {
       setHud(snapshot(run))
       if (!run.live() && !reportedRef.current) {
         reportedRef.current = true
-        if (!demo) reportResult(nameRef.current, run.state.mode, run.state.outcome, run.state.crossed, run.state.hands)
+        if (demo) {
+          const total = recordDemoRun({
+            runId: run.runId,
+            startedAt: new Date(run.startedAtMs).toISOString(),
+            crossings: run.state.crossed,
+            heartsLost: 3 - run.lives(),
+            result: { mode: run.state.mode, outcome: run.state.outcome },
+            ticks: run.tick,
+            inputs: run.inputLog,
+          })
+          setLoggedRuns(total.length)
+        } else {
+          reportResult(nameRef.current, run.state.mode, run.state.outcome, run.state.crossed, run.state.hands)
+        }
       }
     }, TICK_MS)
 
@@ -174,6 +190,14 @@ export default function HeistGame({ demo = false }: Props) {
         <TouchControls
           onPress={(dir: TouchDir) => runRef.current.onKey(dir)}
         />
+      )}
+      {demo && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, fontFamily: theme.type.family, fontSize: theme.type.size.feed, color: theme.palette.concrete }}>
+          <span>{loggedRuns} run{loggedRuns === 1 ? '' : 's'} logged this browser</span>
+          <button onClick={exportDemoLogAsFile} disabled={loggedRuns === 0} style={{ ...buttonStyle, padding: '4px 10px', fontSize: theme.type.size.feed, opacity: loggedRuns === 0 ? 0.5 : 1 }}>
+            EXPORT JSON
+          </button>
+        </div>
       )}
     </div>
   )
