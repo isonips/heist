@@ -129,7 +129,7 @@ export default function HeistGame() {
     }, TICK_MS)
 
     return () => window.clearInterval(id)
-  }, [demo])
+  }, [mode, demo])
 
   const ended = hud.mode === 'paid' || hud.mode === 'lost'
   const canEscape = hud.crossed >= ESCAPE_AT && !ended
