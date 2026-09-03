@@ -6,6 +6,8 @@ import { ESCAPE_AT, H, HeistRun, SCALE, TICK_MS, W, type Mode } from '@/game/hei
 import { postFeedEvent } from '@/game/feedBus'
 import type { EventType } from '@/design/lines'
 import PixelIcon from './PixelIcon'
+import ResponsiveScale from './ResponsiveScale'
+import TouchControls, { type Dir as TouchDir } from './TouchControls'
 
 type Props = { demo?: boolean }
 
@@ -92,8 +94,18 @@ export default function HeistGame({ demo = false }: Props) {
     setHud(snapshot(runRef.current))
   }, [])
 
+  const [touch, setTouch] = useState(false)
+  useEffect(() => {
+    const mq = window.matchMedia('(hover: none) and (pointer: coarse)')
+    const update = () => setTouch(mq.matches)
+    update()
+    mq.addEventListener('change', update)
+    return () => mq.removeEventListener('change', update)
+  }, [])
+
   return (
-    <div style={{ display: 'flex', justifyContent: 'center' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+      <ResponsiveScale width={W * SCALE} height={H * SCALE + CONTROLS_HEIGHT}>
       {/* Controls live inside this fixed-size frame (not in normal page flow
           below it), so the panel's total height never depends on where the
           page happens to end — which is what let the fixed feed window's
@@ -157,6 +169,12 @@ export default function HeistGame({ demo = false }: Props) {
           </button>
         </div>
       </div>
+      </ResponsiveScale>
+      {touch && (
+        <TouchControls
+          onPress={(dir: TouchDir) => runRef.current.onKey(dir)}
+        />
+      )}
     </div>
   )
 }

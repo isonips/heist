@@ -26,6 +26,16 @@ export default function FeedWindow() {
   const [entries, setEntries] = useState<FeedEntry[]>(AMBIENT)
   const [pulse, setPulse] = useState(false)
   const [draft, setDraft] = useState('')
+  // Mobile: "the window becomes a collapsed bar at the bottom of the
+  // screen... it must never cover the game" (design brief, section 10).
+  const [mobile, setMobile] = useState(false)
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 640px)')
+    const update = () => setMobile(mq.matches)
+    update()
+    mq.addEventListener('change', update)
+    return () => mq.removeEventListener('change', update)
+  }, [])
 
   useEffect(() => {
     return subscribeFeed((entry) => {
@@ -49,11 +59,15 @@ export default function FeedWindow() {
     <div
       style={{
         position: 'fixed',
-        right: 12,
-        bottom: 12,
-        width: theme.feed.window.w,
+        right: mobile ? 0 : 12,
+        left: mobile ? 0 : 'auto',
+        bottom: mobile ? 0 : 12,
+        width: mobile ? '100%' : theme.feed.window.w,
         background: pal.shade,
         border: `2px solid ${pal.ink}`,
+        borderLeft: mobile ? 'none' : `2px solid ${pal.ink}`,
+        borderRight: mobile ? 'none' : `2px solid ${pal.ink}`,
+        borderBottom: mobile ? 'none' : `2px solid ${pal.ink}`,
         boxShadow: `0 0 0 3px ${pal.pale} inset`,
         fontFamily: theme.type.family,
         zIndex: 50,
@@ -83,7 +97,13 @@ export default function FeedWindow() {
 
       {!collapsed && (
         <>
-          <div style={{ height: theme.feed.window.h - theme.feed.window.collapsedH - theme.feed.composer.height, overflowY: 'auto', padding: 4 }}>
+          <div
+            style={{
+              height: mobile ? '46vh' : theme.feed.window.h - theme.feed.window.collapsedH - theme.feed.composer.height,
+              overflowY: 'auto',
+              padding: 4,
+            }}
+          >
             {entries.map((e) => (
               <div
                 key={e.id}
