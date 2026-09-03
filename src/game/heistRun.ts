@@ -47,7 +47,7 @@ export type RunState = {
   lives: number
   blink: number
   timeLeft: number
-  outcome: 'collared' | 'flattened'
+  outcome: 'collared' | 'flattened' | 'timeout'
 }
 
 export type AlertInfo = { text: string | null; level: number; critical: boolean }
@@ -339,8 +339,11 @@ export class HeistRun {
     }
   }
 
+  /** Escaping keeps the ticket and forfeits everything carried (both briefs agree on this). */
   escapeNow(): void {
-    if (this.state.crossed >= ESCAPE_AT && this.live()) this.state = { ...this.state, mode: 'paid' }
+    if (this.state.crossed >= ESCAPE_AT && this.live()) {
+      this.state = { ...this.state, mode: 'paid', taken: {}, hands: 'ticket' }
+    }
   }
 
   // ------------------------------------------------------------ per-tick
@@ -428,7 +431,16 @@ export class HeistRun {
     if (this.ms < 1000) return
     this.ms -= 1000
     const t = this.state.timeLeft - 1
-    this.state = t <= 0 ? { ...this.state, timeLeft: 0, mode: 'paid' } : { ...this.state, timeLeft: t }
+    if (t > 0) { this.state = { ...this.state, timeLeft: t }; return }
+    // Surviving the clock only pays out with the goal met — both briefs
+    // agree ten crossings is what secures the ticket, not just outlasting
+    // the 60s. Short of that it's a loss, same shape as being caught.
+    if (this.state.crossed >= ESCAPE_AT) {
+      this.state = { ...this.state, timeLeft: 0, mode: 'paid' }
+    } else {
+      this.loserTune()
+      this.state = { ...this.state, timeLeft: 0, mode: 'lost', outcome: 'timeout' }
+    }
   }
 
   private drawBag(band: 'far' | 'mid' | 'near' | 'relief' | 'critical'): string {

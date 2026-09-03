@@ -7,21 +7,22 @@ const row: CSSProperties = { display: 'flex', justifyContent: 'space-between', p
 
 export default function RulesTab() {
   return (
-    <div style={{ fontFamily: theme.type.family, color: pal.pale, fontSize: 12, lineHeight: 1.6 }}>
-      <p>Cross traffic for {DURATION_S} seconds. {ESCAPE_AT} crossings arms the door out — or just survive the clock. Get caught, or lose all {LIVES_MAX} hearts, and you keep nothing.</p>
+    <div style={{ fontFamily: theme.type.family, color: pal.pale, fontSize: theme.type.size.body, lineHeight: theme.type.lineHeight.read }}>
+      <p>Cross traffic for {DURATION_S} seconds. {ESCAPE_AT} crossings arms the door — escape and you keep the ticket, not what you&apos;re carrying. Survive the clock with the door armed and you keep both. Short of {ESCAPE_AT}, get caught, or lose all {LIVES_MAX} hearts, and you keep nothing.</p>
 
-      <h3 style={{ color: pal.amber, marginTop: 12 }}>Wallet odds (revealed at the end of a run)</h3>
+      <h3 style={{ color: pal.amber, marginTop: 12, fontSize: theme.type.size.body, fontWeight: 700 }}>Wallet odds</h3>
+      <p style={{ color: pal.concrete }}>Planned, not live yet — a wallet only tells you whether you got one, not what was in it:</p>
       <div style={row}><span>Nothing</span><span>45%</span></div>
       <div style={row}><span>Refund</span><span>43%</span></div>
       <div style={row}><span>Double</span><span>11%</span></div>
 
-      <h3 style={{ color: pal.amber, marginTop: 12 }}>Mystery items</h3>
-      <p>Drop from a global counter across every run — never from your own performance. One item of each kind exists per pool; skill cannot buy one.</p>
+      <h3 style={{ color: pal.amber, marginTop: 12, fontSize: theme.type.size.body, fontWeight: 700 }}>Mystery items</h3>
+      <p style={{ color: pal.concrete }}>Planned, not live yet. Will drop from a global counter across every run — never from your own performance — so skill cannot buy one.</p>
 
-      <h3 style={{ color: pal.amber, marginTop: 12 }}>Police</h3>
+      <h3 style={{ color: pal.amber, marginTop: 12, fontSize: theme.type.size.body, fontWeight: 700 }}>Police</h3>
       <p>They trail you by a fixed head start. Lead them too far (past crossing {REIN_FROM}, by more than {REIN_LEAD_S}s) and reinforcements close the gap once, hard.</p>
 
-      <h3 style={{ color: pal.amber, marginTop: 12 }}>Calibration</h3>
+      <h3 style={{ color: pal.amber, marginTop: 12, fontSize: theme.type.size.body, fontWeight: 700 }}>Calibration</h3>
       <p style={{ color: pal.concrete }}>
         Return-to-player and difficulty numbers are not final — the engine and
         its calibration harness are built (see the repo&apos;s CALIBRATION.md),

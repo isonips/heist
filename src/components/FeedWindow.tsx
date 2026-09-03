@@ -1,27 +1,15 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { theme } from '@/design/theme'
-import { ICONS } from '@/design/sprite-data'
-import { drawSprite } from '@/render/pixel'
+import type { ICONS } from '@/design/sprite-data'
 import { eventIcon, type EventType } from '@/design/lines'
 import { postFeedEvent, subscribeFeed, type FeedEntry } from '@/game/feedBus'
+import PixelIcon from './PixelIcon'
 
 const pal = theme.palette
 const MAX_LINES = theme.feed.maxLines
-
-function IconGlyph({ name }: { name: string }) {
-  const ref = useRef<HTMLCanvasElement | null>(null)
-  useEffect(() => {
-    const ctx = ref.current?.getContext('2d')
-    const rows = ICONS[name as keyof typeof ICONS]
-    if (ctx && rows) {
-      ctx.clearRect(0, 0, 16, 16)
-      drawSprite(ctx, rows, 0, 0, 2)
-    }
-  }, [name])
-  return <canvas ref={ref} width={16} height={16} style={{ imageRendering: 'pixelated', flexShrink: 0 }} />
-}
+const FEED_TEXT = theme.type.size.feed
 
 // A few ambient system entries so the wire doesn't sit empty before any real
 // local run has finished — clearly generic, never claiming a specific player.
@@ -80,13 +68,17 @@ export default function FeedWindow() {
           color: pulse ? pal.ink : pal.white,
           border: 'none',
           borderBottom: collapsed ? 'none' : `2px solid ${pal.ink}`,
-          fontSize: 11,
+          fontSize: FEED_TEXT,
           cursor: 'pointer',
           textAlign: 'left',
           padding: '0 8px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
         }}
       >
-        HEIST WIRE — 47 online {collapsed ? '▸' : '▾'}
+        <span>HEIST WIRE — 47 online</span>
+        <PixelIcon name="chevron" scale={1} rotate={collapsed ? -90 : 0} />
       </button>
 
       {!collapsed && (
@@ -107,7 +99,7 @@ export default function FeedWindow() {
                   color: pal.pale,
                 }}
               >
-                <IconGlyph name={eventIcon[e.type].replace('icon.', '')} />
+                <PixelIcon name={eventIcon[e.type].replace('icon.', '') as keyof typeof ICONS} scale={2} />
                 <span>{e.text}</span>
               </div>
             ))}
@@ -125,13 +117,13 @@ export default function FeedWindow() {
                 color: pal.pale,
                 border: 'none',
                 fontFamily: theme.type.family,
-                fontSize: 11,
+                fontSize: FEED_TEXT,
                 padding: '0 6px',
               }}
             />
             <button
               onClick={send}
-              style={{ background: pal.amber, color: pal.ink, border: 'none', fontSize: 11, padding: '0 10px', cursor: 'pointer' }}
+              style={{ background: pal.amber, color: pal.ink, border: 'none', fontSize: FEED_TEXT, padding: '0 10px', cursor: 'pointer' }}
             >
               SEND
             </button>

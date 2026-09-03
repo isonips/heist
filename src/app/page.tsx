@@ -11,7 +11,10 @@ export default function Home() {
   const [tab, setTab] = useState<TabId>('play')
 
   return (
-    <>
+    // Bottom padding reserves room below the window so the feed window —
+    // fixed to the viewport corner — never ends up sharing a spot with the
+    // page's own last content on a short viewport, at any scroll position.
+    <div style={{ paddingBottom: 64 }}>
       <WindowChrome active={tab} onChange={setTab}>
         {tab === 'play' && <HeistGame key="play" />}
         {tab === 'demo' && <HeistGame key="demo" demo />}
@@ -19,6 +22,6 @@ export default function Home() {
         {tab === 'haul' && <MyHaulTab />}
       </WindowChrome>
       <FeedWindow />
-    </>
+    </div>
   )
 }

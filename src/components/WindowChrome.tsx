@@ -2,6 +2,7 @@
 
 import type { ReactNode } from 'react'
 import { theme } from '@/design/theme'
+import PixelIcon from './PixelIcon'
 
 export type TabId = 'play' | 'demo' | 'rules' | 'haul'
 
@@ -44,13 +45,13 @@ export default function WindowChrome({
           justifyContent: 'space-between',
           padding: '0 8px',
           borderBottom: `2px solid ${pal.ink}`,
-          fontSize: 14,
+          fontSize: theme.type.size.body,
         }}
       >
         <span>HEIST.exe</span>
         <span style={{ display: 'flex', gap: 4 }}>
-          <ChromeButton label="_" />
-          <ChromeButton label="X" />
+          <ChromeButton icon="min" />
+          <ChromeButton icon="close" />
         </span>
       </div>
 
@@ -67,7 +68,7 @@ export default function WindowChrome({
                 color: isActive ? pal.amber : pal.concrete,
                 border: 'none',
                 borderRight: `1px solid ${pal.ink}`,
-                fontSize: 12,
+                fontSize: theme.type.size.body,
                 cursor: 'pointer',
               }}
             >
@@ -82,7 +83,7 @@ export default function WindowChrome({
   )
 }
 
-function ChromeButton({ label }: { label: string }) {
+function ChromeButton({ icon }: { icon: 'min' | 'close' }) {
   return (
     <span
       style={{
@@ -93,10 +94,9 @@ function ChromeButton({ label }: { label: string }) {
         justifyContent: 'center',
         background: pal.chrome,
         boxShadow: `inset 1px 1px 0 ${pal.steelLt}, inset -1px -1px 0 ${pal.ink}`,
-        fontSize: 10,
       }}
     >
-      {label}
+      <PixelIcon name={icon} scale={2} />
     </span>
   )
 }
