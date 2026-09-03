@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { theme } from '@/design/theme'
 import { ESCAPE_AT } from '@/game/heistRun'
-import { getStats, getTicketsToday, getUsername, setUsername, type ProfileStats } from '@/game/profile'
+import { ENTRY_FEE_USDG, getBestDay, getStats, getTicketsToday, getUsername, setUsername, type ProfileStats } from '@/game/profile'
 
 const pal = theme.palette
 const BODY = theme.type.size.body
@@ -17,6 +17,7 @@ export default function ProfileTab() {
   const [editing, setEditing] = useState(false)
   const [stats, setStats] = useState<ProfileStats | null>(null)
   const [tickets, setTickets] = useState(0)
+  const [bestDay, setBestDay] = useState(0)
 
   useEffect(() => {
     const existing = getUsername()
@@ -25,6 +26,7 @@ export default function ProfileTab() {
     setEditing(!existing)
     setStats(getStats())
     setTickets(getTicketsToday())
+    setBestDay(getBestDay())
   }, [])
 
   const save = () => {
@@ -70,20 +72,32 @@ export default function ProfileTab() {
         <span>Tickets earned today</span>
         <span style={{ color: pal.gold }}>{tickets}</span>
       </div>
+      <div style={row}>
+        <span>Biggest day</span>
+        <span style={{ color: pal.gold }}>{bestDay}</span>
+      </div>
       <p style={{ color: pal.concrete, fontSize: FEED, marginTop: 4 }}>
         One ticket per run that reaches {ESCAPE_AT} crossings and gets out — escape early or ride out the
         clock, the ticket is yours either way. Resets at midnight UTC.
       </p>
 
       <h3 style={{ color: pal.amber, fontSize: BODY, fontWeight: 700, marginTop: 16 }}>Stats</h3>
-      <div style={row}><span>Games played</span><span>{stats?.gamesPlayed ?? 0}</span></div>
+      <div style={row}>
+        <span>Won / played</span>
+        <span>{stats?.gamesWon ?? 0} / {stats?.gamesPlayed ?? 0}</span>
+      </div>
+      <div style={row}>
+        <span>Total staked</span>
+        <span>{(stats?.gamesPlayed ?? 0) * ENTRY_FEE_USDG} USDG</span>
+      </div>
       <div style={row}><span>Total crossings</span><span>{stats?.totalCrossings ?? 0}</span></div>
       <div style={row}><span>Wallets stolen</span><span>{stats?.walletsStolen ?? 0}</span></div>
       <div style={row}><span>Wallet winnings (points)</span><span style={{ color: pal.gold }}>{stats?.walletWinningsTotal ?? 0}</span></div>
       <div style={row}><span>Paintings stolen</span><span>{stats?.paintingsStolen ?? 0}</span></div>
       <p style={{ color: pal.concrete, fontSize: FEED, marginTop: 8 }}>
         &quot;Stolen&quot; only counts what you actually kept — escaping forfeits whatever&apos;s in hand,
-        same rule as everywhere else. Points are play money: there is no payment system yet.
+        same rule as everywhere else. Total staked is a projection (games played × {ENTRY_FEE_USDG} USDG) —
+        no payment system exists yet, so nothing has actually moved.
       </p>
     </div>
   )

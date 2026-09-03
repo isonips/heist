@@ -1,14 +1,20 @@
-// Username + lifetime stats + today's ticket count. All local to this
-// browser — there's no account system yet (phase 3: wallet-backed
-// identity). "Stolen" and "winnings" stats only count runs that actually
-// kept the loot (survived with it) — matching the same rule as the loot
-// itself: escaping forfeits it, so it was never really kept.
+// Username + lifetime stats + ticket tracking. All local to this browser —
+// there's no account system yet (phase 3: wallet-backed identity). "Stolen"
+// and "winnings" stats only count runs that actually kept the loot
+// (survived with it) — matching the same rule as the loot itself: escaping
+// forfeits it, so it was never really kept.
 const USERNAME_KEY = 'heist-username-v1'
 const STATS_KEY = 'heist-stats-v1'
 const TICKETS_KEY = 'heist-tickets-v1'
 
+// Nominal — no payment system exists yet. "Total staked" is gamesPlayed x
+// this, a projection of what it will cost once entries are real, not money
+// that has actually moved.
+export const ENTRY_FEE_USDG = 10
+
 export type ProfileStats = {
   gamesPlayed: number
+  gamesWon: number
   totalCrossings: number
   walletsStolen: number
   walletWinningsTotal: number
@@ -16,7 +22,7 @@ export type ProfileStats = {
 }
 
 function emptyStats(): ProfileStats {
-  return { gamesPlayed: 0, totalCrossings: 0, walletsStolen: 0, walletWinningsTotal: 0, paintingsStolen: 0 }
+  return { gamesPlayed: 0, gamesWon: 0, totalCrossings: 0, walletsStolen: 0, walletWinningsTotal: 0, paintingsStolen: 0 }
 }
 
 export function getUsername(): string | null {
@@ -47,6 +53,7 @@ function saveStats(stats: ProfileStats) {
 }
 
 export function recordGameResult(opts: {
+  won: boolean
   crossings: number
   walletKept: boolean
   walletPayout: number
@@ -54,6 +61,7 @@ export function recordGameResult(opts: {
 }): ProfileStats {
   const stats = getStats()
   stats.gamesPlayed += 1
+  if (opts.won) stats.gamesWon += 1
   stats.totalCrossings += opts.crossings
   if (opts.walletKept) {
     stats.walletsStolen += 1
@@ -68,22 +76,42 @@ function todayKey(): string {
   return new Date().toISOString().slice(0, 10) // YYYY-MM-DD, UTC
 }
 
-export function getTicketsToday(): number {
-  if (typeof window === 'undefined') return 0
+type TicketState = { date: string; count: number; bestDay: number }
+
+function loadTickets(): TicketState {
+  if (typeof window === 'undefined') return { date: todayKey(), count: 0, bestDay: 0 }
   try {
     const raw = window.localStorage.getItem(TICKETS_KEY)
-    if (!raw) return 0
-    const parsed = JSON.parse(raw) as { date: string; count: number }
-    return parsed.date === todayKey() ? parsed.count : 0
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<TicketState>
+      return { date: parsed.date ?? todayKey(), count: parsed.count ?? 0, bestDay: parsed.bestDay ?? 0 }
+    }
   } catch {
-    return 0
+    // fall through
   }
+  return { date: todayKey(), count: 0, bestDay: 0 }
+}
+
+function saveTickets(state: TicketState) {
+  if (typeof window === 'undefined') return
+  try { window.localStorage.setItem(TICKETS_KEY, JSON.stringify(state)) } catch { /* unavailable */ }
+}
+
+/** Tickets earned today (the nightly draw resets it — 0 once the date rolls over). */
+export function getTicketsToday(): number {
+  const state = loadTickets()
+  return state.date === todayKey() ? state.count : 0
+}
+
+/** The most tickets ever earned in a single day, regardless of today's count. */
+export function getBestDay(): number {
+  return loadTickets().bestDay
 }
 
 export function recordTicketWon(): number {
-  const count = getTicketsToday() + 1
-  if (typeof window !== 'undefined') {
-    try { window.localStorage.setItem(TICKETS_KEY, JSON.stringify({ date: todayKey(), count })) } catch { /* unavailable */ }
-  }
+  const state = loadTickets()
+  const count = state.date === todayKey() ? state.count + 1 : 1
+  const bestDay = Math.max(state.bestDay, count)
+  saveTickets({ date: todayKey(), count, bestDay })
   return count
 }

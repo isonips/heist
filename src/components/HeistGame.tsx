@@ -103,6 +103,7 @@ export default function HeistGame({ demo = false }: Props) {
         }
         if (!demo) {
           recordGameResult({
+            won: run.state.mode === 'paid',
             crossings: run.state.crossed,
             walletKept: run.state.mode === 'paid' && (run.state.hands === 'wallet' || run.state.hands === 'both'),
             walletPayout: run.state.walletOutcome === 'nothing' ? 0 : run.state.walletOutcome === 'refund' ? run.state.walletAmount : run.state.walletOutcome === 'double' ? run.state.walletAmount * 2 : 0,
