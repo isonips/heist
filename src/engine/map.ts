@@ -180,6 +180,17 @@ export function buildMap(seed: number, cfg: Config): MapData {
     laneIndex++
   }
 
+  // The map must never end mid-road: a player stranded on the last lane
+  // with nowhere to advance to, and live traffic still passing through it,
+  // would be stuck taking hits forever. Close with one more verge even if
+  // that pushes slightly past MAXLANE.
+  if (lanes[lanes.length - 1].kind === 'road') {
+    crossIndex++
+    const built = buildVergeLane(laneIndex, crossIndex, rng)
+    rng = built.rng
+    lanes.push(built.lane)
+  }
+
   const map: MapData = { seed, cfg, lanes, maxCrossingsAchievable: 0, tickAtTenthCrossing: null, rejectedLaneAttempts }
   const solved = solveMap(map)
   map.maxCrossingsAchievable = solved.maxCrossingsAchievable

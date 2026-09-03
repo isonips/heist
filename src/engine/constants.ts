@@ -10,9 +10,9 @@ export const LIVES = 3
 export const MAXLANE = 60
 
 // Player move cadence. Not enumerated as a named constant in the brief;
-// picked as a reasonable arcade hop rate (30 TPS / 6 ticks = 5 hops/s) and
+// picked as a reasonable arcade hop rate (30 TPS / 4 ticks = 7.5 hops/s) and
 // used consistently by movement, the reachability check and the solver.
-export const TICKS_PER_MOVE = 6
+export const TICKS_PER_MOVE = 4
 
 // Reinforcement (rubber band), fired at most once per run.
 export const REIN_FROM = 7 // crossing index it can start firing from
@@ -39,12 +39,15 @@ export const BUS_STOP_CROSSING_MAX = 9
 export const LOOT_PICKUP_RANGE_COLS = 3
 
 // Traffic strip shape. `slots` cars spaced `period` cells apart per lane,
-// picked per-lane from a seeded roll within these bounds.
+// picked per-lane from a seeded roll within these bounds. Period is cells
+// between car centers; with HIT=700 (a 1.4-cell collision footprint) a
+// period of 2 leaves almost no gap, so the floor is set at 3.
 export const SLOTS_MIN = 3
 export const SLOTS_MAX = 6
-export const PERIOD_MIN = 2
-export const PERIOD_MAX = 4
+export const PERIOD_MIN = 3
+export const PERIOD_MAX = 5
 
 // Base traffic scroll speed at lane 0, in FP cells per tick, before
-// speedMul/ramp are applied. 90 FP/tick @ 30 TPS = 2.7 cells/s.
-export const BASE_SPEED_FP_PER_TICK = 90
+// speedMul/ramp are applied. 50 FP/tick @ 30 TPS = 1.5 cells/s — slow enough
+// that a single-slot gap still clears for several ticks at cfg.speedMul=1.
+export const BASE_SPEED_FP_PER_TICK = 50

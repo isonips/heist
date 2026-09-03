@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# calibration harness output (regenerate with npx tsx src/harness/cli.ts)
+/harness-out/
