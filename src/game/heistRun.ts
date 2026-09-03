@@ -82,7 +82,9 @@ export class HeistRun {
   alertMsg: string | null = null
   alertLevel = -1
   critical = false
+  soundOn = true
   private alertBags: Record<string, string[]> = {}
+  private ac: AudioContext | null | undefined
 
   constructor() {
     this.newRun()
@@ -95,6 +97,83 @@ export class HeistRun {
 
   lives(): number {
     return this.state.mode === 'lost' ? 0 : this.state.mode === 'hit' ? 2 : this.state.lives
+  }
+
+  toggleSound(): void {
+    this.soundOn = !this.soundOn
+    if (!this.soundOn && this.ac) { this.ac.close(); this.ac = undefined }
+  }
+
+  // --------------------------------------------------------------- sound
+  // Everything is synthesised, no audio files — same as the prototype. The
+  // context is created lazily on the first tone, which always lands after a
+  // user gesture (a keypress), so autoplay is never blocked.
+  private audio(): AudioContext | null {
+    if (!this.soundOn) return null
+    if (!this.ac) {
+      const AC = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      if (!AC) { this.ac = null; return null }
+      this.ac = new AC()
+    }
+    if (this.ac.state === 'suspended') this.ac.resume().catch(() => {})
+    return this.ac
+  }
+
+  private tone(freq: number, dur: number, type: OscillatorType, gain: number, delay = 0) {
+    const ac = this.audio()
+    if (!ac) return
+    const t0 = ac.currentTime + delay
+    const osc = ac.createOscillator(), g = ac.createGain()
+    osc.type = type
+    osc.frequency.setValueAtTime(freq, t0)
+    g.gain.setValueAtTime(0, t0)
+    g.gain.linearRampToValueAtTime(gain, t0 + 0.01)
+    g.gain.linearRampToValueAtTime(0, t0 + dur)
+    osc.connect(g); g.connect(ac.destination)
+    osc.start(t0); osc.stop(t0 + dur + 0.02)
+  }
+
+  private bend(f0: number, f1: number, dur: number, type: OscillatorType, gain: number, delay = 0) {
+    const ac = this.audio()
+    if (!ac) return
+    const t0 = ac.currentTime + delay
+    const osc = ac.createOscillator(), g = ac.createGain()
+    osc.type = type
+    osc.frequency.setValueAtTime(f0, t0)
+    osc.frequency.linearRampToValueAtTime(f1, t0 + dur)
+    g.gain.setValueAtTime(0, t0)
+    g.gain.linearRampToValueAtTime(gain, t0 + 0.02)
+    g.gain.linearRampToValueAtTime(0, t0 + dur)
+    osc.connect(g); g.connect(ac.destination)
+    osc.start(t0); osc.stop(t0 + dur + 0.02)
+  }
+
+  private loserTune() {
+    ;[392, 349, 311].forEach((hz, i) => this.tone(hz, 0.16, 'triangle', 0.09, i * 0.22))
+    this.bend(294, 150, 0.95, 'triangle', 0.11, 0.68)
+  }
+
+  private barsSlam() {
+    this.tone(1400, 0.04, 'square', 0.05, 0)
+    this.bend(220, 70, 0.5, 'square', 0.12, 0.05)
+    this.tone(58, 0.5, 'triangle', 0.12, 0.1)
+    ;[0.6, 1.0, 1.4].forEach((d) => {
+      this.tone(700, 0.24, 'square', 0.09, d)
+      this.tone(930, 0.24, 'square', 0.09, d + 0.26)
+    })
+  }
+
+  private siren() {
+    const s = this.secsToArrest()
+    if (s > 18) return
+    const near = Math.max(0, Math.min(1, 1 - s / 18))
+    const g = 0.025 + near * 0.085
+    this.tone(620 + near * 120, 0.26, 'square', g, 0)
+    this.tone(840 + near * 130, 0.26, 'square', g, 0.28)
+  }
+
+  private laugh() {
+    ;[420, 350, 300].forEach((hz, i) => this.tone(hz, 0.09, 'triangle', 0.07, i * 0.12))
   }
 
   // -------------------------------------------------------------- world
@@ -206,6 +285,7 @@ export class HeistRun {
     const loot = this.lootAt(this.bi)
     if (band.k !== 'stop' || !loot) return
     if (Math.abs((this.tx + 11) - (this.lootX(this.bi) + 4)) > 14) return
+    this.laugh()
     const taken = { ...this.state.taken, [loot]: true }
     const has = (n: string) => taken[n]
     const hands: Hands = has('wallet') && has('painting') ? 'both' : has('wallet') ? 'wallet' : 'painting'
@@ -292,7 +372,7 @@ export class HeistRun {
       this.clearTicks = 0
       const lives = Math.max(0, this.state.lives - 1)
       const next: Partial<RunState> = { lives, blink: 10 }
-      if (lives === 0) { next.mode = 'lost'; next.outcome = 'flattened' }
+      if (lives === 0) { next.mode = 'lost'; next.outcome = 'flattened'; this.loserTune() }
       this.state = { ...this.state, ...next }
     }
     if (cov) this.clearTicks = 0
@@ -313,6 +393,7 @@ export class HeistRun {
     const push = lead > POLICE_MAX_LEAD_S ? 2.6 : lead > 18 ? 1.6 : 1
     this.policeWy += POLICE_PX * push
     if (this.policeWy + 26 >= this.wy) {
+      this.barsSlam()
       this.state = { ...this.state, mode: 'caught', outcome: 'collared' }
       this.lostAt = this.tick + Math.round(1600 / TICK_MS)
     }
@@ -337,6 +418,7 @@ export class HeistRun {
       this.policeWy = r.wy
       this.reinDone = true
       this.reinBanner = 26
+      this.laugh()
     }
   }
 
@@ -366,6 +448,9 @@ export class HeistRun {
     if (!this.live() || !this.started) { this.alertMsg = null; this.alertLevel = -1; this.critical = false; return }
     const s = this.secsToArrest()
     if (this.reinBanner > 0) {
+      // Counts down on its own — without this it never releases and the
+      // critical red wash it forces stays on for the rest of the run.
+      this.reinBanner--
       this.alertMsg = 'A CRUISER JUST CUT IN'
       this.alertLevel = 4
       this.critical = true
@@ -390,6 +475,10 @@ export class HeistRun {
     this.reinforce()
     this.clock()
     this.alerts()
+    if (this.live() && this.started) {
+      const s2a = this.secsToArrest()
+      if (this.tick % (s2a < 6 ? 4 : 6) === 0) this.siren()
+    }
     if (this.state.mode === 'caught' && this.lostAt >= 0 && this.tick >= this.lostAt) {
       this.state = { ...this.state, mode: 'lost' }
       this.lostAt = -1

@@ -31,7 +31,10 @@ const AMBIENT: FeedEntry[] = [
 ]
 
 export default function FeedWindow() {
-  const [collapsed, setCollapsed] = useState(false)
+  // Collapsed by default — expanded, it's 420px tall and can sit over the
+  // game's own controls on a narrower window. "Collapsible to just the title
+  // bar so it never gets in the way" (design brief) argues for starting there.
+  const [collapsed, setCollapsed] = useState(true)
   const [entries, setEntries] = useState<FeedEntry[]>(AMBIENT)
   const [pulse, setPulse] = useState(false)
   const [draft, setDraft] = useState('')

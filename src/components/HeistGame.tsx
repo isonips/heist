@@ -84,6 +84,11 @@ export default function HeistGame({ demo = false }: Props) {
   const ended = hud.mode === 'paid' || hud.mode === 'lost'
   const canEscape = hud.crossed >= ESCAPE_AT && !ended
 
+  const toggleSound = useCallback(() => {
+    runRef.current.toggleSound()
+    setHud(snapshot(runRef.current))
+  }, [])
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
       <div style={{ position: 'relative', width: W * SCALE, height: H * SCALE }}>
@@ -126,6 +131,9 @@ export default function HeistGame({ demo = false }: Props) {
         {canEscape && (
           <button onClick={() => runRef.current.escapeNow()} style={buttonStyle}>ESCAPE</button>
         )}
+        <button onClick={toggleSound} style={{ ...buttonStyle, padding: '6px 10px' }} title={hud.soundOn ? 'Mute' : 'Unmute'}>
+          {hud.soundOn ? 'SOUND ON' : 'SOUND OFF'}
+        </button>
       </div>
     </div>
   )
@@ -141,6 +149,7 @@ function snapshot(run: HeistRun) {
     outcome: run.state.outcome,
     hands: run.state.hands,
     alertMsg: run.alertMsg,
+    soundOn: run.soundOn,
   }
 }
 
