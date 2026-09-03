@@ -27,6 +27,17 @@ const REASON_LABEL: Record<'paid' | 'collared' | 'flattened' | 'timeout', string
   timeout: 'ran out of road',
 }
 
+// Level -1/0..4 skin for the police-distance banner (relief, far, mid, near,
+// critical/reinforcement) — colours lifted straight from the palette, same
+// mapping the original prototype used.
+const ALERT_SKIN = [
+  { bg: theme.palette.verge, fg: theme.palette.white, right: 'KEEP GOING' },
+  { bg: theme.palette.amberDp, fg: theme.palette.gold, right: 'KEEP CROSSING' },
+  { bg: theme.palette.amberDk, fg: theme.palette.ink, right: 'KEEP CROSSING' },
+  { bg: theme.palette.sirenRed, fg: theme.palette.white, right: 'KEEP CROSSING' },
+  { bg: theme.palette.sirenRed, fg: theme.palette.ink, right: 'RUN' },
+]
+
 function reportResult(name: string, mode: Mode, outcome: 'collared' | 'flattened' | 'timeout', crossed: number, hands: string) {
   let type: EventType
   let tokens: Record<string, string | number>
@@ -92,7 +103,11 @@ export default function HeistGame() {
 
     const id = window.setInterval(() => {
       const run = runRef.current
-      if (run.live()) run.advance()
+      // Always tick, even once caught — collide()/law()/etc self-gate on
+      // live() internally, but the caught->lost transition (1.6s after the
+      // arrest) only fires inside advance(). Gating the call itself here
+      // froze the run on the flashing red "caught" frame forever.
+      run.advance()
       run.draw(ctx)
       setHud(snapshot(run))
       if (!run.live() && !reportedRef.current) {
@@ -157,8 +172,37 @@ export default function HeistGame() {
     )
   }
 
+  const showBanner = hud.mode === 'caught' || (hud.live && hud.started)
+  const skin = ALERT_SKIN[Math.max(0, hud.alertLevel)] ?? ALERT_SKIN[1]
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+      {showBanner && (
+        <div
+          style={{
+            width: W * SCALE,
+            maxWidth: '100%',
+            boxSizing: 'border-box',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            background: hud.mode === 'caught' ? theme.palette.sirenRed : skin.bg,
+            color: hud.mode === 'caught' ? theme.palette.white : skin.fg,
+            border: `2px solid ${theme.palette.ink}`,
+            padding: '4px 8px',
+            marginBottom: 4,
+            fontFamily: theme.type.family,
+            fontSize: theme.type.size.feed,
+          }}
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <PixelIcon name={hud.mode !== 'caught' && hud.alertLevel === 0 ? 'escape' : 'siren'} scale={2} />
+            {hud.mode === 'caught' ? 'THEY HAVE YOU' : hud.alertMsg ?? 'YOU CAN HEAR THE SIRENS'}
+          </span>
+          <span>{hud.mode === 'caught' ? 'NO ROAD LEFT' : skin.right}</span>
+        </div>
+      )}
       <ResponsiveScale width={W * SCALE} height={H * SCALE + CONTROLS_HEIGHT}>
       {/* Controls live inside this fixed-size frame (not in normal page flow
           below it), so the panel's total height never depends on where the
@@ -189,6 +233,26 @@ export default function HeistGame() {
             }}
           >
             {ITEM_LABEL[hud.effectBanner]}
+          </div>
+        )}
+        {hud.mode === 'caught' && (
+          <div
+            style={{
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              bottom: 0,
+              padding: 10,
+              background: theme.palette.amberDp,
+              borderTop: `2px solid ${theme.palette.amber}`,
+              textAlign: 'center',
+              fontFamily: theme.type.family,
+              fontSize: theme.type.size.body,
+              color: theme.palette.white,
+              pointerEvents: 'none',
+            }}
+          >
+            AH SHIT, HERE WE GO AGAIN
           </div>
         )}
         {ended && (
@@ -287,6 +351,9 @@ function snapshot(run: HeistRun) {
     outcome: run.state.outcome,
     hands: run.state.hands,
     alertMsg: run.alertMsg,
+    alertLevel: run.alertLevel,
+    live: run.live(),
+    started: run.started,
     soundOn: run.soundOn,
     heldItem: run.state.heldItem,
     effectBanner: run.itemEffectBanner && run.tick < run.itemEffectBanner.untilTick ? run.itemEffectBanner.item : null,
