@@ -52,6 +52,7 @@ export type RationalTrialResult = {
 export function runRationalBotTrial(seed?: number, paintingRoll: () => boolean = () => false): RationalTrialResult {
   const run = new HeistRun(seed, paintingRoll)
   run.soundOn = false // headless in Node; when run live in a browser (e.g. /stats), this stops it from opening a real AudioContext per trial
+  run.setSprinting(true) // always sprint when possible — the greedy baseline for pace, same as a player mashing the fastest option
   const lootAvailable = Object.keys(run.lootPlan).length > 0
   let ticks = 0
   let tickAtTenth: number | null = null

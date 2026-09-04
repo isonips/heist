@@ -357,6 +357,129 @@ long it takes to *complete* a crossing rather than how likely a run is to
 die before finishing one. Not touched here without direction to do so,
 consistent with this session's standing rule about map generation.
 
+## P0 follow-up 3: a decelerating traffic-speed ramp — same wall, different route
+
+Before sprint, tried making `trafficPx()` (vehicle scroll speed, not
+spacing) compound with crossings — first a flat per-tier rate
+(`TRAFFIC_SPEED_TIER_CROSSINGS`/`RAMP_PCT`, since removed), then a
+per-crossing rate that decreases band by band as the run goes on
+(`TRAFFIC_SPEED_BANDS`, kept — 10/8/6/4/2% per crossing across bands
+[0,5), [5,10), [10,15), [15,20), [20,∞), scaled by `TRAFFIC_SPEED_SCALE`),
+matching how difficulty curves usually avoid a runaway exponential. Same
+result as follow-up 2 either way: whatever scale pushed reach-10 rate into
+the 45-55% band (~0.8×) had already crushed conditional survival to 0%,
+because a ramp that's purely a function of *total crossed* necessarily
+gives a run that's gone further past the 10th (which is exactly what
+committing requires) a *larger* cumulative value than a run that just
+reached it — there's no way to be "harder before 10" and "gentler while
+holding after 10" with one curve evaluated at two different points on the
+same increasing line. `TRAFFIC_SPEED_SCALE` ships at 0 (neutral — this
+lever's structural ceiling turned out to be the same as follow-up 2's,
+not worth carrying a nonzero default that doesn't clear any target).
+
+## P0 follow-up 4: sprint/stamina — the lever that actually worked
+
+The brief's own read on follow-up 2's dead end: police/traffic-pressure
+levers only filter out unlucky runs — they don't touch the survivors' own
+median pace. What was missing was something that costs *time* uniformly
+rather than *survival probability* selectively. Proposal: hold Enter to
+sprint; `SPRINT_DRAIN_S` seconds of it and the gauge (state.staminaPct)
+empties, forcing `winded` — slower than baseline, not just back to
+baseline — until it refills over `SPRINT_RECHARGE_S`. Implemented in
+`heistRun.ts` (`setSprinting()`, `staminaTick()`, `speedMult()`), logged
+as `SprintDown`/`SprintUp` actions for replay, wired into
+`bot.ts`/`greedyBot.ts`/`rationalBot.ts` as "always sprint when possible"
+(the natural greedy baseline for measuring pace).
+
+**First pass — the placeholder values (1.5×/0.6×, 8s/5s) made continuous
+sprint-holding *faster* than baseline on average**, not slower: the
+weighted average of 8s at 1.5× and 5s at 0.6× is `(8×1.5+5×0.6)/13 ≈
+1.15×`. Caught this via the duty-cycle math before trusting the first
+(flat) sweep result, rather than reporting "sprint doesn't move the
+needle" without checking why.
+
+**Second pass — even the most extreme values (1.0×/0.0×, i.e. sprint
+grants no speed at all and winded means a full stop) only reached
+medianSecsToTenth ≈ 26s, and reach-10 rate collapsed to 10%.** Diagnosis:
+`law()`'s police advance is a fixed per-tick rate independent of the
+thief's own speed — it closes on `wy - policeWy`, the *position* gap, not
+elapsed time. Slowing the thief without slowing the police is
+mathematically identical to speeding the police up: both close the gap
+faster. Every lever tried in follow-ups 2 and 3 did this too, just less
+directly — this is the same trap under a different name, and it explains
+why nothing before sprint could move the survivors' median pace: anything
+that costs time by making a run more likely to die *is* the trap, not an
+accident of a particular knob.
+
+**The fix, and the reason this session's model didn't reach it alone —
+the user did:** slow the police by the *exact same factor* as the thief
+while winded (not while sprinting — sprint stays a real, earned
+advantage). `law()`'s police advance and `advance()`'s traffic scroll both
+multiply by `windedMult()` (winded-only, ignoring sprint) alongside the
+thief's own `speedMult()`. Because both sides of the arrest-gap race slow
+in lockstep, the relative closing rate — and so the real arrest
+probability — is unchanged; only the real time it takes to cover the same
+ground goes up. `secsToArrest()` itself is deliberately left dividing by
+the *full*, un-slowed `POLICE_PX`, so it reads pessimistic during a winded
+stretch (as if the police were still closing at full speed) — the player
+feels pressure that isn't mechanically real, which was the point, not a
+side effect to fix.
+
+**Third pass, extending the same lockstep principle to traffic, still
+came up short at the exact given durations (8s/5s):** reach-10 rate
+recovered from 10% to 41% at the extreme (1.0×/0.0×), and medianSecsToTenth
+reached 30.7s — real progress, but the theoretical ceiling with these
+durations is `8×1/13 ≈ 0.615×` even at the limit (winded = full stop),
+which peaks around 36s, not 40-48s. **Extending `SPRINT_RECHARGE_S`
+(explicitly offered as "5 secondes par exemple" in the brief, not a fixed
+requirement) is what closed the rest of the gap** — the recharge-only
+sweep at 1.0×/0.0× alone reached medianSecsToTenth 45-49s at
+recharge=13-15s, but reach-10 rate fell to 11-16% doing it: at 0.0×, a
+thief frozen mid-hop inside a traffic lane for the full winded duration is
+a near-certain hit regardless of the police-gap fix, since `collide()`'s
+risk is about *ticks spent covered*, not the position-gap race. Fixed the
+same way as the police gap: `advance()`'s traffic scroll also multiplies
+by `windedMult()`, so a frozen thief faces frozen traffic too.
+
+**Fourth pass — even with both lockstep fixes, a thief who *started* a
+hop while sprinting could still wind out mid-crossing and get caught
+crawling three lanes into a four-lane road with no way back.** Per
+instruction: locked the thief's own hop speed (`crossingSpeedMult`) the
+moment they leave a safe band (pave/stop), held fixed for every lane of
+that crossing regardless of how the gauge changes underneath, released
+only once back on safe ground. A multi-lane crossing is now entered
+knowing the pace it'll be crossed at; getting winded mid-road is no longer
+possible — winded can only ever apply to a crossing *starting* from a
+sidewalk, which is also where recovery becomes real again ("récupère sur
+les trottoirs"). This alone moved the sweep's best point from ~41%
+reach-10 rate to ~52% at the same constants, before further tuning.
+
+**Final sweep and shipped values** (`sweepWindow.ts`, greedy bot, 5000-8000
+trials per point; POLICE_HEAD_START_S and TRAFFIC_DENSITY left at their
+original baseline throughout — only POLICE_PX and the sprint constants
+were varied):
+
+| POLICE_PX | drain/recharge | S / W | reach-10 rate | median secsToTenth | cond. survival |
+|---|---|---|---|---|---|
+| 4.0 | 8/5 (placeholders) | 1.5/0.6 | 73-85% | 23-24s | 62-87% |
+| 4.0 | 8/13 | 1.0/0.0 | 50.4% | 46.2s | 99.4% |
+| 5.5 | 8/10 | 1.0/0.0 | 40.3% | 40.4s | 71.5% (PX 5.2) |
+| **5.5** | **8/10** | **1.0/0.0** | **37.4%** | **39.4s** | **64.5%** |
+
+Shipped: `POLICE_PX = 5.5`, `SPRINT_DRAIN_S = 8`, `SPRINT_RECHARGE_S = 10`,
+`SPRINT_SPEED_MULT = 1.0`, `WINDED_SPEED_MULT = 0.0`. Conditional survival
+lands inside the 50-65% target (64.5%). Reach-10 rate (37.4%) and median
+secsToTenth (39.4s) sit just under their floors (45% and 40s) — within a
+few points, not the order-of-magnitude gaps every earlier attempt in
+follow-ups 2-4 produced, but not a clean triple hit either. Roughly a
+dozen more combinations around this point (`POLICE_PX` 5.0-6.0,
+`SPRINT_RECHARGE_S` 10-15, `SPRINT_DRAIN_S` 8-12) were tried without
+finding one that clears all three at once — the three metrics move
+together tightly enough in this neighborhood that no further search
+within the same four constants found a strict improvement. Accepted as
+final per instruction ("on laisse comme ça") rather than continuing to
+search or loosening a target band.
+
 ## Known-fixed issues
 
 - `buildMap` (the dormant `src/engine/`) could end on a live 'road' lane

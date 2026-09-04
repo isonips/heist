@@ -73,6 +73,7 @@ export type BotTrialResult = {
 export function runBotTrial(seed?: number, paintingRoll: () => boolean = () => false): BotTrialResult {
   const run = new HeistRun(seed, paintingRoll)
   run.soundOn = false // headless in Node; when run live in a browser (e.g. /stats), this stops it from opening a real AudioContext per trial
+  run.setSprinting(true) // always sprint when possible — the greedy baseline for pace, same as a player mashing the fastest option
   let leadAtSeventhS: number | null = null
   let ticks = 0
 

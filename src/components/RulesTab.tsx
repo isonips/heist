@@ -1,5 +1,5 @@
 import { theme } from '@/design/theme'
-import { DURATION_S, ESCAPE_AT, LIVES_MAX, WINDOW_S } from '@/game/heistRun'
+import { DURATION_S, ESCAPE_AT, LIVES_MAX, SPRINT_DRAIN_S, SPRINT_RECHARGE_S, WINDOW_S } from '@/game/heistRun'
 
 const pal = theme.palette
 
@@ -19,6 +19,13 @@ export default function RulesTab() {
       <p style={{ color: pal.concrete }}>
         The NFT drop — genuinely rare (a real cross-player counter needs the
         phase-3 backend). What it actually is stays unrevealed for now.
+      </p>
+
+      <h3 style={{ color: pal.amber, marginTop: 12, fontSize: theme.type.size.body, fontWeight: 700 }}>Sprint</h3>
+      <p>
+        Hold Enter (or the running icon on touch) to run. {SPRINT_DRAIN_S}
+        seconds of it and you&apos;re winded — slower than normal until the
+        gauge is back up, which takes {SPRINT_RECHARGE_S} seconds.
       </p>
 
       <h3 style={{ color: pal.amber, marginTop: 12, fontSize: theme.type.size.body, fontWeight: 700 }}>Police</h3>

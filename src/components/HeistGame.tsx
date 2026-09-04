@@ -105,12 +105,30 @@ export default function HeistGame() {
         runRef.current.useItem()
         return
       }
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        if (!e.repeat) runRef.current.setSprinting(true)
+        return
+      }
       if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return
       e.preventDefault()
       runRef.current.onKey(e.key)
     }
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') runRef.current.setSprinting(false)
+    }
+    // Releases a stuck sprint if the tab loses focus mid-hold (alt-tab,
+    // switching windows) — otherwise a keyup that never arrives would pin
+    // sprint on for the rest of the run.
+    const onBlur = () => runRef.current.setSprinting(false)
     window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onBlur)
+    }
   }, [])
 
   useEffect(() => {
@@ -422,6 +440,7 @@ export default function HeistGame() {
       {touch && (
         <TouchControls
           onPress={(dir: TouchDir) => runRef.current.onKey(dir)}
+          onSprintChange={(held: boolean) => runRef.current.setSprinting(held)}
         />
       )}
       {demo && (
@@ -446,6 +465,8 @@ function snapshot(run: HeistRun) {
     crossed: run.state.crossed,
     timeLeft: run.state.timeLeft,
     windowLeft: run.state.windowLeft,
+    staminaPct: run.state.staminaPct,
+    winded: run.state.winded,
     mode: run.state.mode,
     outcome: run.state.outcome,
     hands: run.state.hands,
@@ -473,25 +494,42 @@ function Hud({ hud }: { hud: HudSnapshot }) {
         height: HUD_HEIGHT,
         background: pal.ink,
         display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '0 6px',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        gap: 3,
+        padding: '3px 6px',
         fontFamily: theme.type.family,
         fontSize: theme.type.size.body,
         color: pal.pale,
         pointerEvents: 'none',
       }}
     >
-      <span style={{ display: 'flex', gap: 2 }}>
-        {[0, 1, 2].map((i) => <PixelIcon key={i} name={i < hud.lives ? 'heartFull' : 'heartEmpty'} scale={2} />)}
-      </span>
-      <span>{hud.timeLeft}s</span>
-      <span>{hud.crossed} / {ESCAPE_AT}</span>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ display: 'flex', gap: 2 }}>
+          {[0, 1, 2].map((i) => <PixelIcon key={i} name={i < hud.lives ? 'heartFull' : 'heartEmpty'} scale={2} />)}
+        </span>
+        <span>{hud.timeLeft}s</span>
+        <span>{hud.crossed} / {ESCAPE_AT}</span>
+      </div>
+      {hud.started && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <PixelIcon name="running" scale={2} />
+          <div style={{ flex: 1, height: 4, background: pal.chrome, border: `1px solid ${pal.ink}` }}>
+            <div
+              style={{
+                width: `${Math.round(hud.staminaPct * 100)}%`,
+                height: '100%',
+                background: hud.winded ? pal.sirenRed : pal.amber,
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-const HUD_HEIGHT = 24
+const HUD_HEIGHT = 34
 
 const buttonStyle: CSSProperties = {
   fontFamily: theme.type.family,

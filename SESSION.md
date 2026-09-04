@@ -15,9 +15,15 @@ an unlisted human-vs-bot comparison page (P2). Fourth pass (this one):
 `LOOT_ESCAPE_AT` itself replaced by a fixed-length decision window
 (commit or walk away, once, ten seconds after the door arms) per new
 instruction, swept against three new balance targets, and reported
-honestly when none of the three requested knobs could reach them. Details
-and reasoning for every non-obvious call are in `DECISIONS.md`; tuning
-history and every measured number is in `CALIBRATION.md`.
+honestly when none of the three requested knobs (police speed/head start,
+traffic density) could reach them — followed by a sprint/stamina mechanic
+(the user's proposal) that turned out to be the actual missing lever,
+after two more user-caught fixes (police and traffic have to slow down in
+lockstep with a winded thief, or slowing the thief just closes the arrest
+gap faster; a crossing has to be entered at a locked pace so winded can
+never strike mid-road) got it within a few points of all three targets.
+Details and reasoning for every non-obvious call are in `DECISIONS.md`;
+tuning history and every measured number is in `CALIBRATION.md`.
 
 Every commit across all four sessions builds, typechecks, and lints clean
 (`npx tsc --noEmit`, `npx eslint src --max-warnings=0`, `npm run build`) —
@@ -97,6 +103,35 @@ checked before each one, not just at the end.
   the brief's own instruction for exactly this outcome. Full table and
   diagnosis: `CALIBRATION.md`'s "P0 follow-up 2" entry; mechanic writeup:
   `DECISIONS.md`'s "P0: the commitment window replaces LOOT_ESCAPE_AT".
+- **P0 (session 4 continued): sprint/stamina — the lever that actually
+  moved the target.** A decelerating traffic-speed ramp was tried next
+  (`TRAFFIC_SPEED_BANDS`) and hit the identical wall for a structural
+  reason: any single curve that's a function of total crossings has to
+  give a run further past the 10th (exactly what committing requires) a
+  *larger* value than one that just reached it — no shape change fixes
+  that. The user's next proposal broke the pattern: a sprint gauge (hold
+  to run, get winded, recover) throttles *pace* uniformly instead of
+  *survival probability* selectively — the missing category of lever.
+  First pass showed it could go the wrong way entirely (placeholder
+  values made continuous sprinting *faster* on average than not
+  sprinting) before it worked. Two more fixes, both the user's own catch,
+  got it there: (1) `law()`'s police advance is a fixed rate against the
+  *position* gap, so slowing the thief without slowing the police is the
+  same as speeding the police up — fixed by slowing both, and traffic too,
+  by the same factor while winded (never while sprinting, which stays a
+  real advantage); (2) a thief could still wind out mid-crossing on a
+  multi-lane road with no way back — fixed by locking hop speed for the
+  whole crossing the moment a safe band (pave/stop) is left, releasing
+  only on landing back on one. **Shipped: `POLICE_PX = 5.5`,
+  `SPRINT_DRAIN_S = 8`, `SPRINT_RECHARGE_S = 10`, `SPRINT_SPEED_MULT =
+  1.0`, `WINDED_SPEED_MULT = 0.0`** — clears conditional survival (64.5%,
+  target 50-65%) with reach-10 rate (37.4%) and median secsToTenth (39.4s)
+  a few points under their floors (45%, 40s), the closest of a
+  dozen-plus combinations tried near this point. Accepted as final per
+  instruction rather than continuing to search. Full sweep history:
+  `CALIBRATION.md`'s "P0 follow-up 4"; mechanic and fix reasoning:
+  `DECISIONS.md`'s "P0: sprint/stamina, and why the police/traffic have to
+  slow down too".
 
 ## Reinforcement — done (session 1)
 
@@ -210,19 +245,24 @@ README.md replaced entirely; updated again this session for the backend.
    `/stats` shows real human runs, and an address's progress follows it to
    a second browser) — this sandbox couldn't do it (network policy), but a
    normal browser hitting the deployed app can.
-3. **The commitment-window balance targets (session 4) are unmet and
-   waiting on a decision only the project owner can make.** `POLICE_PX`/
-   `POLICE_HEAD_START_S`/`TRAFFIC_DENSITY` can't reach 40-48s median
-   time-to-10th without a lever outside this sweep's scope — most likely
-   `buildWorld()`'s own lane-count roll or the base traffic scroll speed
-   (`TRAFFIC_PX`), both untouched per this session's standing rule about
-   map generation. Full diagnosis: `CALIBRATION.md`'s "P0 follow-up 2".
-4. **Privy** — needs `NEXT_PUBLIC_PRIVY_APP_ID`, then `connectPrivy()` in
+3. **Commitment-window balance: closed, accepted as final, not a clean
+   triple hit.** Sprint/stamina (session 4 continued) got conditional
+   survival into its target band; reach-10 rate and median secsToTenth sit
+   a few points under their floors, the closest point a dozen-plus
+   combinations found. Accepted per instruction ("on laisse comme ça")
+   rather than continuing to search — see `CALIBRATION.md`'s "P0
+   follow-up 4" if the target band ever needs revisiting.
+4. **Visuals for the two escape outcomes — agreed, not yet started.** An
+   early ticket-only escape steals a bike and pulls away; holding to the
+   end after committing gets picked up by helicopter. Deliberately
+   sequenced after the balance work above, per instruction ("on ajustera
+   après la vitesse... une fois ok on passe aux visuels").
+5. **Privy** — needs `NEXT_PUBLIC_PRIVY_APP_ID`, then `connectPrivy()` in
    `identity.ts` gets its real implementation.
-5. **On-chain ledger / Solidity port** — still out of scope; the
+6. **On-chain ledger / Solidity port** — still out of scope; the
    determinism work and `test-vectors/heist-v1.json` exist so that work has
    something to check itself against when it starts.
-6. Minor: `npm run test:determinism` regenerates `test-vectors/heist-v1.json`
+7. Minor: `npm run test:determinism` regenerates `test-vectors/heist-v1.json`
    with different (still valid) recorded actions each run, because the
    harness bot's own left/right tie-break is an unseeded coin flip
    (deliberately — it's the bot's policy, not engine state).

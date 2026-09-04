@@ -9,7 +9,7 @@
 // measurement vehicle: every trial that reaches the window lapses straight
 // into 'committed' unless caught first, which is exactly the denominator
 // "conditional survival after commit" needs.
-import { POLICE_HEAD_START_S, POLICE_PX, TICK_MS, TRAFFIC_DENSITY } from '@/game/heistRun'
+import { POLICE_HEAD_START_S, POLICE_PX, SPRINT_DRAIN_S, SPRINT_RECHARGE_S, SPRINT_SPEED_MULT, TICK_MS, TRAFFIC_DENSITY, TRAFFIC_SPEED_SCALE, WINDED_SPEED_MULT } from '@/game/heistRun'
 import { runGreedyBotTrial } from './greedyBot'
 
 const trials = Number(process.argv[2] ?? 3000)
@@ -33,6 +33,11 @@ console.log(JSON.stringify({
   policePx: POLICE_PX,
   policeHeadStartS: POLICE_HEAD_START_S,
   trafficDensity: TRAFFIC_DENSITY,
+  trafficSpeedScale: TRAFFIC_SPEED_SCALE,
+  sprintSpeedMult: SPRINT_SPEED_MULT,
+  windedSpeedMult: WINDED_SPEED_MULT,
+  sprintDrainS: SPRINT_DRAIN_S,
+  sprintRechargeS: SPRINT_RECHARGE_S,
   trials,
   reachedTenthRate: Number(reachedTenthRate.toFixed(4)),
   medianSecsToTenth,

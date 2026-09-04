@@ -762,3 +762,69 @@ after a few real keypresses (confirming the new three-way branch's
 `showBanner` fallthrough didn't regress), and no console/runtime errors
 fire in any of it.
 
+## P0: sprint/stamina, and why the police/traffic have to slow down too
+
+Follow-up to the window-balance sweep above, which found no combination of
+`POLICE_PX`/`POLICE_HEAD_START_S`/`TRAFFIC_DENSITY` could reach 40-48s
+median-seconds-to-the-10th — every one of them only changes whether a run
+*survives* to the 10th, not how fast it gets there, so pushing them harder
+just kills slow runs off instead of slowing the survivors down. The user's
+proposal: a sprint gauge (hold to run, get winded, recover) — a lever that
+throttles *pace* uniformly rather than *survival probability* selectively.
+Full mechanic and sweep history: `CALIBRATION.md`'s P0 follow-up 4 — this
+entry is the design reasoning, not the numbers.
+
+**The core insight came from the user, not from this session's own
+modeling, and it's worth recording precisely because it wasn't obvious
+from the engine alone:** `law()`'s police advance is a fixed rate against
+the *position* gap (`wy - policeWy`), not against elapsed time. Slowing
+the thief without slowing the police is mathematically identical to
+speeding the police up — both close the same gap faster. This was
+confirmed empirically first (extreme sprint/winded values only reached
+~26s median with reach-10 rate crushed to 10%) before the fix went in, not
+assumed. The fix — multiply the police's per-tick advance in `law()`, and
+traffic's scroll in `advance()`, by the same `windedMult()` the thief's
+own hop uses while winded (never while sprinting — sprint stays a real,
+earned advantage, not something the world also speeds up to match) —
+makes the *relative* closing rate, and so the real arrest probability,
+unaffected by how long a winded stretch runs. Only real time changes.
+`secsToArrest()` is deliberately left un-rescaled (still divides by the
+full `POLICE_PX`), so it reads pessimistic while winded — the player feels
+chased harder than they mechanically are, which is what the user asked
+for ("ils ne le savent pas donc ils ont la pression de ralentir") and
+falls out of the fix for free rather than needing separate engineering.
+
+**Second problem, also user-caught:** a thief who started a hop while
+sprinting could still wind out mid-crossing and get stuck slow in the
+middle of a multi-lane road with no way back — "traverser une voie de 4
+routes sans être ralenti au milieu." Fixed by locking the thief's own hop
+speed (`crossingSpeedMult`) the instant they leave a safe band (pave/stop)
+and holding it fixed through every lane of that crossing, however many,
+regardless of what the gauge does underneath — released only on landing
+back on safe ground. A crossing is now entered at a known, committed pace;
+winded can only ever be something that happens (and is felt) starting from
+a sidewalk, which is also where recovery becomes real — "il peut récupérer
+sur les trottoirs et ne pas traverser" falls out of the same fix, not a
+second mechanism.
+
+**Bots hold sprint continuously** (`bot.ts`/`greedyBot.ts`/
+`rationalBot.ts` call `setSprinting(true)` once, right after construction)
+— the natural greedy baseline ("always try to go fast") that both
+represents an eager player's real strategy and gives the sweep a single,
+reproducible policy to measure pace against, rather than needing a second
+bot archetype just for stamina timing.
+
+**Final values** (`POLICE_PX = 5.5`, `SPRINT_DRAIN_S = 8`,
+`SPRINT_RECHARGE_S = 10`, `SPRINT_SPEED_MULT = 1.0`,
+`WINDED_SPEED_MULT = 0.0`) clear the conditional-survival target (64.5% in
+the 50-65% band) but leave reach-10 rate (37.4%) and median secsToTenth
+(39.4s) a few points short of their floors (45%, 40s) — the closest a
+dozen-plus combinations around this point came to a clean triple hit.
+Accepted as final per instruction ("on laisse comme ça") rather than
+continuing to search past that point or loosening a target band to fit
+the result. `TRAFFIC_SPEED_BANDS`/`TRAFFIC_SPEED_SCALE` (an earlier,
+decelerating-rate traffic-speed-ramp attempt, tried before sprint) stay in
+the codebase at a neutral default (`SCALE = 0`) — same structural ceiling
+as every other pressure-only lever, not deleted since the plumbing itself
+is sound and sweepable if ever needed again.
+

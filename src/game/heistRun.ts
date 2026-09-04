@@ -30,13 +30,39 @@ const SAFE: Record<string, boolean> = { pave: true, stop: true }
 export const TRAFFIC_PX = 4
 // Multiplier on inverse lane spacing — 1 is the original baseline, greater
 // than 1 packs vehicles tighter (smaller gaps between them), less than 1
-// spreads them out. Swept alongside POLICE_PX/POLICE_HEAD_START_S for the
-// commitment-window balance below (see CALIBRATION.md's P0 follow-up).
+// spreads them out. Swept for the commitment-window balance (see
+// CALIBRATION.md's P0 follow-up) and left at its neutral default — see
+// TRAFFIC_SPEED_BANDS below for the lever that replaced it.
 export const TRAFFIC_DENSITY = 1
+// Traffic scroll speed compounds per crossing (not per tier) at a rate that
+// decreases band by band — the standard decelerating difficulty-ramp shape
+// (Tetris-style level speed curves use the same idea): early crossings ramp
+// up fast, later ones add progressively less. A flat, non-decreasing
+// compounding rate was tried first and rejected — see CALIBRATION.md's P0
+// follow-up 3 — because a run that keeps crossing after committing pushes
+// the tier (and so the speed) up without bound, at a *constant* relative
+// rate, which crushed conditional survival after commitment to ~0% well
+// before the pre-10th difficulty was anywhere near the reach-10 target.
+// Decreasing the rate per band keeps the ramp real early on (where it needs
+// to cut the reach-10 rate) while letting it taper off for a run that's
+// gone on a while (where it needs to stop strangling survival outright).
+// TRAFFIC_SPEED_SCALE multiplies every band's rate uniformly — the single
+// knob actually swept; the band shape itself stays fixed.
+export const TRAFFIC_SPEED_BANDS: { upTo: number; pctPerCrossing: number }[] = [
+  { upTo: 5, pctPerCrossing: 0.10 },
+  { upTo: 10, pctPerCrossing: 0.08 },
+  { upTo: 15, pctPerCrossing: 0.06 },
+  { upTo: 20, pctPerCrossing: 0.04 },
+  { upTo: Infinity, pctPerCrossing: 0.02 },
+]
+export const TRAFFIC_SPEED_SCALE = 0
 export const POLICE_MAX_LEAD_S = 26
 export const REIN_FROM = 7
 export const REIN_LEAD_S = 11
-export const POLICE_PX = 4.0
+// 4.0 was the original baseline; raised to 5.5 as part of the
+// commitment-window balance sweep once sprint/winded existed as a lever —
+// see CALIBRATION.md's P0 follow-up 3/4 for the full search.
+export const POLICE_PX = 5.5
 export const POLICE_HEAD_START_S: [number, number] = [5, 7]
 export const TICK_MS = 110
 export const ESCAPE_AT = 10
@@ -56,6 +82,28 @@ export const WINDOW_S = 10
 export const LOOT_FROM = 6
 export const LIVES_MAX = 3
 export const DURATION_S = 60
+// Sprint: hold to run faster while the gauge (state.staminaPct, 1 = full)
+// has anything left. SPRINT_DRAIN_S is how many seconds of continuous
+// sprint it takes to empty it; hitting empty forces `winded`, which stays
+// true — and slows the run below its normal pace, not just back to normal
+// — until the gauge has fully refilled, which takes SPRINT_RECHARGE_S. The
+// gauge also refills at that same rate any time sprint isn't being held,
+// even before it's empty. Point of the mechanic: unlike police/traffic
+// pressure alone (which only filters out unlucky runs, leaving the
+// survivors' own median pace untouched — CALIBRATION.md's P0 follow-up
+// 2), this throttles everyone's pace by the same amount, so it's the
+// lever that can actually move medianSecsToTenth. Tuned via a sweep
+// against the commitment-window targets, alongside POLICE_PX above — full
+// search and the values these replaced (1.5/0.6/8/5): CALIBRATION.md's P0
+// follow-up 3/4. SPRINT_SPEED_MULT = 1 (no real speed bonus — sprinting
+// only postpones winded, it doesn't outrun it) turned out to matter far
+// less than WINDED_SPEED_MULT and SPRINT_RECHARGE_S for reaching the
+// targets; kept as its own constant rather than folded away, since a
+// non-1 value is a legitimate thing to revisit later.
+export const SPRINT_DRAIN_S = 8
+export const SPRINT_RECHARGE_S = 10
+export const SPRINT_SPEED_MULT = 1.0
+export const WINDED_SPEED_MULT = 0.0
 export const CAR_COLOURS = [
   { body: 'B', shade: 'S', light: 'C' }, { body: 'R', shade: 'b', light: 'A' },
   { body: 'C', shade: 's', light: 'P' }, { body: 'V', shade: 'K', light: 'l' },
@@ -99,6 +147,11 @@ export type RunState = {
   // and once it's resolved (armed -> committed, or an escape). See
   // WINDOW_S; only meaningful while mode === 'armed'.
   windowLeft: number
+  // Sprint gauge, 1 = full, 0 = empty. Drains while sprinting, refills
+  // otherwise (see staminaTick()). `winded` latches true the instant it
+  // hits 0 and only clears once staminaPct is back to 1 — see SPRINT_*.
+  staminaPct: number
+  winded: boolean
   outcome: 'collared' | 'flattened' | 'timeout'
   heldItem: ItemKey | null
   // Rolled the moment the wallet is picked up, revealed only at the end of
@@ -117,7 +170,7 @@ export type LoggedInput = { tick: number; key: string; atMs: number }
  *  landed on — the complete record replay(seed, actions) needs to reproduce
  *  a run bit-for-bit. Movement reuses Dir; Escape/UseItem cover the other
  *  two buttons a player can press. */
-export type ReplayAction = Dir | 'Escape' | 'UseItem'
+export type ReplayAction = Dir | 'Escape' | 'UseItem' | 'SprintDown' | 'SprintUp'
 export type ReplayInput = [tick: number, action: ReplayAction]
 
 export type Result = {
@@ -133,7 +186,7 @@ export type Result = {
 }
 
 export class HeistRun {
-  state: RunState = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, windowLeft: 0, outcome: 'collared', heldItem: null, walletOutcome: null, walletAmount: 0 }
+  state: RunState = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, windowLeft: 0, staminaPct: 1, winded: false, outcome: 'collared', heldItem: null, walletOutcome: null, walletAmount: 0 }
   // The seed this run's world and every roll in it derive from — see
   // DECISIONS.md #1. Passed explicitly for a replay; otherwise picked here
   // so ordinary play still gets a fresh, recorded, verifiable world.
@@ -188,6 +241,7 @@ export class HeistRun {
   clearTicks = 99
   wasCovered = false
   started = false
+  sprintHeld = false
   ms = 0
   headStart = 0
   lootPlan: Record<number, string> = {}
@@ -384,12 +438,14 @@ export class HeistRun {
     this.wasCovered = false
     this.clearTicks = 99
     this.started = false
+    this.sprintHeld = false
+    this.crossingSpeedMult = null
     this.ms = 0
     this.lostAt = -1
     this.tick = 0
     this.inputLog = []
     this.actionLog = []
-    this.state = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, windowLeft: 0, outcome: 'collared', heldItem: null, walletOutcome: null, walletAmount: 0 }
+    this.state = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, windowLeft: 0, staminaPct: 1, winded: false, outcome: 'collared', heldItem: null, walletOutcome: null, walletAmount: 0 }
   }
 
   stopX(index: number): number { return ((index * 67) % (W - 80)) + 8 }
@@ -554,7 +610,19 @@ export class HeistRun {
   }
 
   // ------------------------------------------------------------- traffic
-  trafficPx(): number { return TRAFFIC_PX + Math.min(3, Math.floor(this.state.crossed / 3)) }
+  trafficPx(): number {
+    let mult = 1
+    let remaining = this.state.crossed
+    let prevUpTo = 0
+    for (const band of TRAFFIC_SPEED_BANDS) {
+      const bandSize = Math.min(remaining, band.upTo - prevUpTo)
+      if (bandSize > 0) mult *= Math.pow(1 + band.pctPerCrossing * TRAFFIC_SPEED_SCALE, bandSize)
+      remaining -= bandSize
+      prevUpTo = band.upTo
+      if (remaining <= 0) break
+    }
+    return TRAFFIC_PX * mult
+  }
 
   vehiclesIn(index: number): Vehicle[] {
     const band = this.bands[index]
@@ -629,10 +697,79 @@ export class HeistRun {
     }
   }
 
+  /** Hold to sprint. Only logs on an actual transition (idempotent
+   *  repeated calls, matching how a real held key generates repeat
+   *  keydown events) so the replay log doesn't fill up with no-ops. */
+  setSprinting(held: boolean): void {
+    if (held === this.sprintHeld) return
+    this.actionLog.push([this.tick, held ? 'SprintDown' : 'SprintUp'])
+    this.sprintHeld = held
+  }
+
+  /** Hop-speed multiplier for the current tick: faster while actually
+   *  sprinting (held, gauge not empty, not winded), slower than baseline
+   *  while winded, 1 otherwise. `winded` alone gates the slow state
+   *  regardless of whether sprint is still held — you can't will yourself
+   *  un-winded early. */
+  private speedMult(): number {
+    if (this.state.winded) return WINDED_SPEED_MULT
+    if (this.sprintHeld && this.state.staminaPct > 0) return SPRINT_SPEED_MULT
+    return 1
+  }
+
+  /** The multiplier actually applied to the thief's own hop. Off safe
+   *  ground (a road band, not pave/stop), it's locked to whatever
+   *  speedMult() read the moment the thief left the last safe band —
+   *  fixed for every lane of the crossing, however many — rather than
+   *  re-read live and risk hitting empty mid-crossing. A 4-lane road has
+   *  to be enterable knowing you'll clear it at the pace you started
+   *  with; getting caught winded three lanes in, with no way back, isn't
+   *  a fair cost for time spent sprinting earlier. The lock releases (and
+   *  a fresh, possibly-recovered value gets sampled) only once back on
+   *  pave/stop — recovery is something a run to a sidewalk earns, not a
+   *  background tick that can land anywhere, including mid-road. */
+  private crossingSpeedMult: number | null = null
+  private currentSpeedMult(): number {
+    if (SAFE[this.bands[this.bi].k]) { this.crossingSpeedMult = null; return this.speedMult() }
+    if (this.crossingSpeedMult === null) this.crossingSpeedMult = this.speedMult()
+    return this.crossingSpeedMult
+  }
+
+  /** Same WINDED_SPEED_MULT, but only ever applied to the *world* around
+   *  the thief (police, traffic) — never sprint, which stays a real,
+   *  earned advantage rather than something the world also speeds up to
+   *  match. Used everywhere winded needs to cost real time without
+   *  costing real risk: police (law()) and traffic (advance()). Without
+   *  this on traffic too, a winded thief mid-hop just spends more real
+   *  ticks sitting in a lane while cars keep moving at full speed — the
+   *  same "self-inflicted risk" trap the police fix closes, just via
+   *  collision instead of the arrest gap. */
+  private windedMult(): number {
+    return this.state.winded ? WINDED_SPEED_MULT : 1
+  }
+
+  /** Drains/refills the sprint gauge every tick (continuous, unlike
+   *  clock()'s once-per-second countdowns — stamina should read as
+   *  smooth, not ticking down in visible steps). Sprinting only happens
+   *  while held, there's gauge left, and the run isn't already winded;
+   *  hitting empty latches `winded` until a full refill, per SPRINT_*. */
+  private staminaTick(): void {
+    if (!this.live() || !this.started) return
+    const deltaS = TICK_MS / 1000
+    const sprinting = this.sprintHeld && this.state.staminaPct > 0 && !this.state.winded
+    if (sprinting) {
+      const staminaPct = Math.max(0, this.state.staminaPct - deltaS / SPRINT_DRAIN_S)
+      this.state = { ...this.state, staminaPct, winded: staminaPct <= 0 }
+    } else {
+      const staminaPct = Math.min(1, this.state.staminaPct + deltaS / SPRINT_RECHARGE_S)
+      this.state = { ...this.state, staminaPct, winded: this.state.winded && staminaPct < 1 }
+    }
+  }
+
   // ------------------------------------------------------------ per-tick
   private step(): void {
     if (this.hopTo === null) { this.pickUp(); return }
-    this.wy += this.dirV * HOP_STEP
+    this.wy += this.dirV * HOP_STEP * this.currentSpeedMult()
     if (this.dirV > 0 && this.wy >= this.hopTo) {
       this.wy = this.hopTo
       this.hopTo = null
@@ -685,7 +822,18 @@ export class HeistRun {
     if (!this.live() || !this.started) return
     const lead = this.secsToArrest()
     const push = lead > POLICE_MAX_LEAD_S ? 2.6 : lead > 18 ? 1.6 : 1
-    this.policeWy += POLICE_PX * push
+    // Winded slows the police by the exact same factor as the thief (not
+    // sprint — that stays a real advantage, earned) so the gap closes at
+    // its normal rate, not faster: being winded costs real time, not extra
+    // arrest risk. secsToArrest() below is deliberately left dividing by
+    // the full, un-slowed POLICE_PX — during a winded stretch it reads
+    // pessimistic (as if the police were still closing at full speed),
+    // which is the point: the player feels the pressure of "they're
+    // catching up" without it being mechanically true. See DECISIONS.md's
+    // sprint/winded entry for why this replaces a naive "just slow the
+    // thief down" version, which quietly turned every difficulty knob
+    // already tried into the same trap via this exact gap.
+    this.policeWy += POLICE_PX * push * this.windedMult()
     if (!this.invincible && this.policeWy + 26 >= this.wy) {
       this.barsSlam()
       this.state = { ...this.state, mode: 'caught', outcome: 'collared' }
@@ -787,9 +935,10 @@ export class HeistRun {
   /** One full tick: input has already been applied via onKey(). */
   advance(): void {
     this.tick++
+    this.staminaTick()
     this.step()
     if (this.live()) this.collide()
-    this.trafficOff += this.trafficPx()
+    this.trafficOff += this.trafficPx() * this.windedMult()
     this.law()
     this.reinforce()
     this.clock()
@@ -1002,6 +1151,8 @@ export function replay(seed: number, actions: ReplayInput[], paintingRoll: () =>
       const [, action] = actions[ai]
       if (action === 'Escape') run.escapeNow()
       else if (action === 'UseItem') run.useItem()
+      else if (action === 'SprintDown') run.setSprinting(true)
+      else if (action === 'SprintUp') run.setSprinting(false)
       else run.onKey(action)
       ai++
     }
