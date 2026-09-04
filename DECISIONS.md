@@ -195,3 +195,36 @@ who's been playing without connecting keeps using the same unscoped keys
 about this change requires or forces a connection. Reconciliation only ever
 runs at the moment of an explicit connect click.
 
+## 5. `/embed`
+
+**Content is synthetic, not a real shared feed.** There's no backend to pull
+genuine cross-visitor activity from (same limitation as the mystery-item
+drops and painting rarity elsewhere in this codebase — see `MyHaulTab`/
+`paintingStore.ts` from before this session). `/embed` generates plausible
+lines client-side on an interval, through the *exact same* `lines.ts`
+bag-draw and `postFeedEvent`/`subscribeFeed` machinery the real feed uses —
+so the moment a real shared event stream exists, this page's fake generator
+`useEffect` is what gets deleted, and nothing about the rendering or the
+copy needs to change. Flagging this prominently because an acquisition
+widget showing fabricated activity is the kind of thing that reads fine in
+a demo and badly in production if anyone forgets it's still a stand-in.
+
+**300px was already load-bearing, not a number I picked.** `lines.ts`'s own
+header comment says every line is written to fit "a 300px embed" — this
+route is the first thing that actually cashes that constraint in, rather
+than introducing a new one.
+
+**Transparency is done with a route-scoped `<style>` override, not a nested
+layout touching `<body>`.** Next's App Router only lets the *root* layout
+own `<html>`/`<body>`; a nested layout can't change the tag itself, only
+what's inside it. Cheapest correct fix: `/embed`'s page emits
+`html,body{background:transparent!important}` inline, scoped to just that
+route by virtue of only that page rendering it — every other route keeps
+`globals.css`'s solid background untouched.
+
+**No composer, no collapse, no window chrome, read-only.** The brief's
+"sans chrome ni compositeur" — this is meant to be dropped into someone
+else's page as a passive activity ticker, not a second copy of the app's
+own UI; interactivity (sending a message, collapsing) belongs to the real
+`FeedWindow`, not an embed.
+
