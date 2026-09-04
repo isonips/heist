@@ -101,3 +101,42 @@ calibration harness). These 20 fixtures are meant to outlive this session —
 a reference the future Solidity port can replay against — so they needed to
 actually be committed, not thrown away between runs.
 
+## 2. Measurement
+
+**`HeistRun` gained an `invincible` constructor flag, used only by the
+solver.** `impossibleShare` needs "perfect play, ignoring lives and police"
+against the *real* map/traffic logic — reusing `buildWorld()`/`step()`/
+`vehiclesIn()` exactly, not a second copy of them (explicitly ruled out:
+"deux copies divergeront"). `invincible` just short-circuits the two places
+that end a run early (`collide()`'s life loss, `law()`'s catch check) and
+changes nothing else — police still moves, traffic still runs, the map is
+exactly what a real player would see. Never set outside
+`src/harness/solver.ts`; the default constructor path (`new HeistRun()`,
+what every real play session uses) is unaffected.
+
+**`stopX`/`lootX`/`lootAt`/`itemX`/`itemAt` became public.** They were
+`private` on `HeistRun` but are pure reads (no side effects, already used by
+`draw()`) — the greedy bot needs to know whether loot/an item exists at the
+stop it's standing on and where, and re-deriving that eligibility logic
+(crossed-count gating, the taken-flag, the one-per-run item rule) outside
+the class would have been exactly the kind of duplication this whole session
+is meant to avoid. Widening five getters' visibility is a much smaller,
+safer change than that.
+
+**`relativeGap` (1.40 literal / 1.18 fixed-skill) and `impossibleShare`
+(4.2%) both landed far from their targets (< 0.06, 30-35%), and I did not
+force-tune either one to hit them.** Full reasoning and numbers are in
+`CALIBRATION.md`'s new "relativeGap, impossibleShare, lootPickupRate"
+section; the short version: `relativeGap` staying large looks structural to
+a "keep playing against constant risk" bot rather than a tunable parameter,
+and closing `impossibleShare`'s gap would mean redesigning `buildWorld()` so
+roughly a third of maps are unwinnable by anyone, which is a real
+game-design decision (not obviously "more calibrated," could easily read as
+"less fair") that the brief didn't ask me to make outright — it asked me to
+measure, and named `POLICE_PX`/`REIN_LEAD_S`-style tuning explicitly only
+for priority 3 (reinforcement). Flagging both numbers here rather than
+quietly reworking map generation to chase a target inherited from the
+abandoned grid engine's own calibration, which may not even transfer.
+`lootPickupRate` (68.8%) is the one number here that's a clean, useful
+result on its own, not a target to hit.
+

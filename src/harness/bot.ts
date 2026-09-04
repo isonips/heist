@@ -10,7 +10,11 @@ import { ESCAPE_AT, HeistRun, REIN_FROM, TICK_MS, resultOf, type ReplayInput, ty
 
 const MAX_TICKS = Math.ceil(65000 / TICK_MS) // hard stop past the 60s run clock, safety margin
 
-function isSafe(run: HeistRun, bandIndex: number, tx: number, lookaheadTicks: number): boolean {
+// Exported so both the greedy/loot-seeking bot (greedyBot.ts) and the
+// reachability solver (solver.ts) can reuse the exact same "is this lane
+// safe to be in N ticks from now" and "cross if it's safe, else dodge"
+// reasoning — rather than a second copy of it that could quietly drift.
+export function isSafe(run: HeistRun, bandIndex: number, tx: number, lookaheadTicks: number): boolean {
   const band = run.bands[(bandIndex % run.bands.length + run.bands.length) % run.bands.length]
   if (band.k !== 'car' && band.k !== 'truck') return true
   const savedOff = run.trafficOff
@@ -29,7 +33,7 @@ function isSafe(run: HeistRun, bandIndex: number, tx: number, lookaheadTicks: nu
 /** Greedy policy: advance when it's safe now and stays safe long enough to
  * clear the band; otherwise sidestep toward whichever side looks clearer.
  * Not required to be optimal — only to approximate a scripted player's ceiling. */
-function decideMove(run: HeistRun): 'ArrowUp' | 'ArrowLeft' | 'ArrowRight' | null {
+export function decideMove(run: HeistRun): 'ArrowUp' | 'ArrowLeft' | 'ArrowRight' | null {
   if (run.hopTo !== null) return null
   const W_BOUND_MIN = 2, W_BOUND_MAX = 226 - 24
 

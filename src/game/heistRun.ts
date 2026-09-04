@@ -128,6 +128,13 @@ export class HeistRun {
   // own contract. Injected so replay()/tests can pin it instead of touching
   // shared localStorage.
   private paintingRoll: () => boolean
+  // Solver-only: ignores collisions and the police catch trigger while
+  // still running every other tick of real logic (traffic, hopping,
+  // pickups) unchanged — this is what "perfect play, ignoring lives and
+  // police" (impossibleShare) means, without a second copy of step()/
+  // buildWorld() to drift out of sync with the real one. Never set true by
+  // anything a player's browser runs. See DECISIONS.md #2.
+  invincible: boolean
   // runId identifies a run for telemetry/export purposes only, not for
   // replay — the seed is what makes a run reproducible.
   runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -169,12 +176,13 @@ export class HeistRun {
   private alertBags: Record<string, string[]> = {}
   private ac: AudioContext | null | undefined
 
-  constructor(seed?: number, paintingRoll: () => boolean = rollPaintingDrop) {
+  constructor(seed?: number, paintingRoll: () => boolean = rollPaintingDrop, invincible = false) {
     // >>> 0 folds a negative/float/out-of-range caller value into a valid
     // uint32 the same way rngFromSeed does, so this.seed always matches what
     // the domain streams were actually derived from.
     this.seed = seed !== undefined ? seed >>> 0 : (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0
     this.paintingRoll = paintingRoll
+    this.invincible = invincible
     this.newRun()
   }
 
@@ -348,8 +356,8 @@ export class HeistRun {
     this.state = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, outcome: 'collared', heldItem: null, walletOutcome: null, walletAmount: 0 }
   }
 
-  private stopX(index: number): number { return ((index * 67) % (W - 80)) + 8 }
-  private lootX(index: number): number { return this.stopX(index) + 44 }
+  stopX(index: number): number { return ((index * 67) % (W - 80)) + 8 }
+  lootX(index: number): number { return this.stopX(index) + 44 }
 
   private rollLoot(): void {
     const stops = this.bands.map((b, i) => (b.k === 'stop' ? i : -1)).filter((i) => i >= 0)
@@ -431,15 +439,15 @@ export class HeistRun {
     this.furn = f
   }
 
-  private lootAt(index: number): string | null {
+  lootAt(index: number): string | null {
     const item = this.lootPlan[index]
     if (!item || this.state.crossed < LOOT_FROM || this.state.taken[item]) return null
     return item
   }
 
-  private itemX(index: number): number { return Math.max(2, this.stopX(index) - 20) }
+  itemX(index: number): number { return Math.max(2, this.stopX(index) - 20) }
 
-  private itemAt(index: number): ItemKey | null {
+  itemAt(index: number): ItemKey | null {
     if (!this.itemPlan || this.itemPlan.index !== index) return null
     if (this.state.heldItem || this.usedItemsThisRun.length) return null // one per run, same as the loot rule
     return this.itemPlan.item
@@ -589,6 +597,7 @@ export class HeistRun {
   }
 
   private collide(): void {
+    if (this.invincible) return
     const cov = this.covered()
     if (!cov) this.clearTicks += 1
     if (cov && this.clearTicks >= 3) {
@@ -615,7 +624,7 @@ export class HeistRun {
     const lead = this.secsToArrest()
     const push = lead > POLICE_MAX_LEAD_S ? 2.6 : lead > 18 ? 1.6 : 1
     this.policeWy += POLICE_PX * push
-    if (this.policeWy + 26 >= this.wy) {
+    if (!this.invincible && this.policeWy + 26 >= this.wy) {
       this.barsSlam()
       this.state = { ...this.state, mode: 'caught', outcome: 'collared' }
       this.lostAt = this.tick + Math.round(1600 / TICK_MS)
