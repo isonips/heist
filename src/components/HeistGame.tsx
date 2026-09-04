@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { theme } from '@/design/theme'
-import { ESCAPE_AT, H, HeistRun, SCALE, TICK_MS, W, type ItemKey, type Mode } from '@/game/heistRun'
+import { ESCAPE_AT, H, HeistRun, LOOT_ESCAPE_AT, SCALE, TICK_MS, W, type ItemKey, type Mode } from '@/game/heistRun'
 import { buildRun } from '@/game/buildRun'
 import { postFeedEvent } from '@/game/feedBus'
 import { exportDemoLogAsFile, getDemoLog, recordDemoRun } from '@/game/demoLog'
@@ -168,6 +168,9 @@ export default function HeistGame() {
 
   const ended = hud.mode === 'paid' || hud.mode === 'lost'
   const canEscape = hud.crossed >= ESCAPE_AT && !ended
+  const carrying = hud.hands !== 'ticket' || hud.heldItem !== null
+  const escapeKeepsLoot = hud.crossed >= LOOT_ESCAPE_AT
+  const lootCrossingsLeft = Math.max(0, LOOT_ESCAPE_AT - hud.crossed)
 
   const toggleSound = useCallback(() => {
     runRef.current.toggleSound()
@@ -337,7 +340,14 @@ export default function HeistGame() {
             {demo ? 'DEMO — nothing at stake' : `${hud.crossed} / ${ESCAPE_AT} crossings`}
           </span>
           {canEscape && (
-            <button onClick={() => runRef.current.escapeNow()} style={buttonStyle}>ESCAPE</button>
+            <button onClick={() => runRef.current.escapeNow()} style={buttonStyle}>
+              {escapeKeepsLoot ? 'ESCAPE — TICKET + LOOT' : 'ESCAPE — TICKET ONLY'}
+            </button>
+          )}
+          {canEscape && carrying && !escapeKeepsLoot && (
+            <span style={{ fontFamily: theme.type.family, fontSize: theme.type.size.feed, color: theme.palette.gold }}>
+              {lootCrossingsLeft} more to keep it
+            </span>
           )}
           {hud.heldItem && !ended && (
             <button onClick={() => runRef.current.useItem()} style={{ ...buttonStyle, display: 'flex', alignItems: 'center', gap: 4 }}>

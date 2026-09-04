@@ -174,6 +174,65 @@ itself works fine. The problem P0 identifies is entirely about the exit
 decision once something valuable is in hand, not about whether the loot can
 be physically reached.
 
+## P0 follow-up: LOOT_ESCAPE_AT — loot banked by pushing on, not surviving the clock
+
+Rule change, not a retune: escaping at `ESCAPE_AT` (10) still secures the
+ticket only; escaping at `LOOT_ESCAPE_AT` or later secures the ticket *and*
+whatever's carried. `LOOT_ESCAPE_AT` replaces "survive to the open 60s
+clock" — which the measurement above found was never actually reachable —
+with a bounded number of extra crossings the player can weigh against their
+current lead. Neither the clock, the police constants, nor `buildWorld()`
+were touched — this is entirely a change to the loot-retention condition.
+
+**First sweep (11-16, `src/harness/rationalBot.ts` unchanged from the
+measurement above) landed at ~0% for every value, which turned out to be a
+flaw in the bot, not the mechanic.** The bot's exit policy re-evaluated a
+fixed 13s safety threshold every tick, inherited from the old open-ended
+"survive the clock" analysis. Since median lead is already ~7s by crossing
+10, that threshold fires on the very first post-arming tick regardless of
+how close `LOOT_ESCAPE_AT` is — the bot never got far enough to test the
+new mechanic at all. Caught via a 2D sanity sweep (`LOOT_ESCAPE_AT` ×
+`SAFE_LEAD_S`, `sweepLootEscape.ts`'s second argument): loosening the
+threshold moved `lootKeptRate` a lot (0.3% → 22-36% across the tested
+range, same `LOOT_ESCAPE_AT` values), which a genuine mechanic-level dead
+end would not have done.
+
+**Fixed the bot, not the game.** A fixed interrupt threshold makes sense
+for an open-ended commitment (more exposure over time = more accumulated
+risk, so bail when it stops looking worth it) but not for a short *bounded*
+one — bailing 1-2 ticks into a 1-6-crossing push doesn't meaningfully
+reduce risk (both paths take a similar number of ticks to reach safety), it
+just forfeits loot for certain in runs that would often have succeeded
+anyway. `rationalBot.ts`'s default is now "commit once armed if there's
+something worth holding, don't second-guess every tick" (`SAFE_LEAD_S =
+0`) — still overridable for sensitivity checks, no longer the default.
+Full reasoning in the file's own header comment.
+
+**Final sweep, 5000 trials per value, corrected bot:**
+
+| LOOT_ESCAPE_AT | lootKeptRate | ticketRate |
+|---|---|---|
+| **11** | **35.2%** (35.55% at 10k trials) | 54.3% ← shipped |
+| 12 | 41.4% | 50.0% |
+| 13 | 35.8% | 46.0% |
+| 14 | 29.1% | 42.5% |
+| 15 | 23.5% | 40.1% |
+| 16 | 19.3% | 37.4% |
+
+`LOOT_ESCAPE_AT = 11` shipped: the lowest value tested, and it already
+clears the 25-40% target (35.2%, confirmed at 35.55% on a 10k-trial
+re-run) — one extra crossing beyond arming is enough. Not monotonic (12
+reads slightly *higher* than both 11 and 13) — this is real, not sampling
+noise: every row above replays the exact same 5000 seeds, so the only
+variable changing is the threshold itself; some specific interaction
+between where `LOOT_ESCAPE_AT` lands and the map's own periodic geometry
+plausibly explains the bump, but it wasn't investigated further since it
+doesn't change the answer. `successRate`/`ticketRate` costs something for
+this bot (54.3% vs. the ~59-61% baseline from bots that don't chase loot at
+all) — a real, expected trade-off: committing past arming for a shot at
+loot means occasionally losing the ticket that a pure escape-at-10 bot
+would have banked for certain.
+
 ## Known-fixed issues
 
 - `buildMap` (the dormant `src/engine/`) could end on a live 'road' lane

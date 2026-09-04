@@ -35,6 +35,16 @@ export const POLICE_PX = 4.0
 export const POLICE_HEAD_START_S: [number, number] = [5, 7]
 export const TICK_MS = 110
 export const ESCAPE_AT = 10
+// Escaping at ESCAPE_AT secures the ticket only. Loot/held items are only
+// kept if you're still going (and escape, or the clock catches you) at
+// LOOT_ESCAPE_AT or later — a bounded number of extra crossings the player
+// can weigh against their own current lead, replacing the old "survive the
+// whole open clock" condition that the P0 rational-bot measurement found
+// was never actually reachable (lootKeptRate 0%, see CALIBRATION.md's P0
+// section and its follow-up). Value picked by sweeping the harness's
+// rational bot 11-16 for the lowest one clearing 25-40% lootKeptRate — see
+// CALIBRATION.md.
+export const LOOT_ESCAPE_AT = 11
 export const LOOT_FROM = 6
 export const LIVES_MAX = 3
 export const DURATION_S = 60
@@ -582,13 +592,21 @@ export class HeistRun {
     }
   }
 
-  /** Escaping keeps the ticket and forfeits everything carried (both briefs agree on this) —
-   *  loot, any held item, and credit for items already used this run. */
+  /** Escaping at ESCAPE_AT..LOOT_ESCAPE_AT-1 keeps the ticket only —
+   *  everything carried (loot, any held item, credit for items already
+   *  used this run) is forfeited. From LOOT_ESCAPE_AT on, escaping keeps
+   *  both. Being caught or run out of lives loses everything regardless of
+   *  crossed, unchanged. */
   escapeNow(): void {
     if (this.state.crossed >= ESCAPE_AT && this.live()) {
-      this.usedItemsThisRun = []
+      const keepsLoot = this.state.crossed >= LOOT_ESCAPE_AT
       this.actionLog.push([this.tick, 'Escape'])
-      this.state = { ...this.state, mode: 'paid', taken: {}, hands: 'ticket', heldItem: null, walletOutcome: null, walletAmount: 0 }
+      if (!keepsLoot) {
+        this.usedItemsThisRun = []
+        this.state = { ...this.state, mode: 'paid', taken: {}, hands: 'ticket', heldItem: null, walletOutcome: null, walletAmount: 0 }
+      } else {
+        this.state = { ...this.state, mode: 'paid' }
+      }
     }
   }
 
@@ -679,11 +697,18 @@ export class HeistRun {
     this.ms -= 1000
     const t = this.state.timeLeft - 1
     if (t > 0) { this.state = { ...this.state, timeLeft: t }; return }
-    // Surviving the clock only pays out with the goal met — both briefs
-    // agree ten crossings is what secures the ticket, not just outlasting
-    // the 60s. Short of that it's a loss, same shape as being caught.
+    // The clock running out is not a choice, but it follows the same
+    // ticket/loot split escapeNow() does: ESCAPE_AT secures the ticket,
+    // LOOT_ESCAPE_AT secures whatever's carried too. Short of ESCAPE_AT
+    // it's a loss, same shape as being caught.
     if (this.state.crossed >= ESCAPE_AT) {
-      this.state = { ...this.state, timeLeft: 0, mode: 'paid' }
+      const keepsLoot = this.state.crossed >= LOOT_ESCAPE_AT
+      if (!keepsLoot) {
+        this.usedItemsThisRun = []
+        this.state = { ...this.state, timeLeft: 0, mode: 'paid', taken: {}, hands: 'ticket', heldItem: null, walletOutcome: null, walletAmount: 0 }
+      } else {
+        this.state = { ...this.state, timeLeft: 0, mode: 'paid' }
+      }
     } else {
       this.loserTune()
       this.state = { ...this.state, timeLeft: 0, mode: 'lost', outcome: 'timeout' }

@@ -1,12 +1,12 @@
 import { theme } from '@/design/theme'
-import { DURATION_S, ESCAPE_AT, LIVES_MAX } from '@/game/heistRun'
+import { DURATION_S, ESCAPE_AT, LIVES_MAX, LOOT_ESCAPE_AT } from '@/game/heistRun'
 
 const pal = theme.palette
 
 export default function RulesTab() {
   return (
     <div style={{ fontFamily: theme.type.family, color: pal.pale, fontSize: theme.type.size.body, lineHeight: theme.type.lineHeight.read }}>
-      <p>Cross traffic for {DURATION_S} seconds. {ESCAPE_AT} crossings arms the door — escape and you keep the ticket, not what you&apos;re carrying. Survive the clock with the door armed and you keep both. Short of {ESCAPE_AT}, get caught, or lose all {LIVES_MAX} hearts, and you keep nothing.</p>
+      <p>Cross traffic for {DURATION_S} seconds. {ESCAPE_AT} crossings arms the door — escape and you keep the ticket, not what you&apos;re carrying. Push on to {LOOT_ESCAPE_AT} and escape from there, and you keep both. Short of {ESCAPE_AT}, get caught, or lose all {LIVES_MAX} hearts, and you keep nothing.</p>
 
       <h3 style={{ color: pal.amber, marginTop: 12, fontSize: theme.type.size.body, fontWeight: 700 }}>Wallet odds</h3>
       <p style={{ color: pal.concrete }}>

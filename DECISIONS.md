@@ -477,3 +477,82 @@ fairness-across-players concern the way item *rarity* has — and nothing
 currently displays it. Left local-only; would follow the same `profile.ts`
 pattern later if the display ever comes back.
 
+## Third session: P0 follow-up (LOOT_ESCAPE_AT), P1 verification, P2 demo telemetry
+
+## P0: LOOT_ESCAPE_AT
+
+**Rule, not retune** — the clock, police constants, and `buildWorld()` are
+all untouched. `escapeNow()` and `clock()`'s timeout branch both now check
+`crossed >= LOOT_ESCAPE_AT` (not just `>= ESCAPE_AT`) to decide whether
+`taken`/`hands`/`heldItem`/`walletOutcome`/`usedItemsThisRun` survive the
+transition to `mode: 'paid'` — the same forfeiture shape `escapeNow()`
+already had, just gated on a second, later threshold instead of unlocking
+at loot-pickup time. Applied identically to the clock timing out (not just
+a voluntary escape) so the two exit paths stay symmetric — a run that
+happens to reach `LOOT_ESCAPE_AT` right as the clock hits zero keeps its
+loot the same as one that chose to escape there.
+
+**The sweep initially returned ~0% for every value 11-16 tested — this
+was a bug in the harness bot, not a dead end in the mechanic, and I
+caught it before reporting a false negative.** The first `rationalBot.ts`
+pass reused its existing `SAFE_LEAD_S=13` interrupt threshold (a fixed,
+every-tick "is this still comfortably safe" check) unchanged from the
+prior open-ended-goal analysis. Since median lead is already ~7s by
+crossing 10, that check fires on literally the first tick after arming
+regardless of `LOOT_ESCAPE_AT`'s value — the bot never got the chance to
+even attempt reaching 11, let alone 16. I noticed the flat-zero result
+looked suspicious (a real mechanic effect should vary *something* across
+11-16, even if it never clears the target) and ran a 2D sanity check
+before accepting the number — varying `SAFE_LEAD_S` alongside
+`LOOT_ESCAPE_AT` showed the threshold, not the mechanic, was driving the
+result (0.3% → 22-36% just from loosening the threshold, same
+`LOOT_ESCAPE_AT`). This is exactly the kind of thing "if the sweep shows
+it doesn't work, say so plainly" was guarding against, and it would have
+been a plainly *wrong* "doesn't work" if I'd reported the first pass
+uncritically.
+
+**Fixed by changing what "rational" means for a bounded goal, not by
+loosening the check until a number looked right.** An interrupt-based
+bail-out is the correct model for an open-ended commitment (risk keeps
+accumulating with time, so re-evaluating and bailing when it's no longer
+worth it is genuinely rational). It's the wrong model for a short, bounded
+one — 1 to 6 more crossings — because bailing 1-2 ticks into a short push
+barely reduces exposure (you're not meaningfully safer having escaped one
+tick earlier than the tick you'd have been caught on anyway) while it
+forfeits the loot with certainty in runs that would often have succeeded.
+`rationalBot.ts`'s default changed from "re-evaluate and bail below 13s of
+lead, every tick" to "commit once armed if there's something worth
+holding, don't second-guess until `LOOT_ESCAPE_AT` or death"
+(`SAFE_LEAD_S = 0` by default, still an overridable parameter — see the
+file's own header comment for the full reasoning, kept there rather than
+only here since that's where a future reader tuning this would look
+first). This is a genuine, argued refinement to the measurement
+methodology, the same category of judgment call as `relativeGap`'s
+closed-form derivation earlier — not "tuning the bot until the game looks
+good," which is precisely what wasn't done: the corrected bot's numbers
+were taken as reported, including that `ticketRate` drops meaningfully
+(59% → 54%) as the real cost of the mechanic now actually working.
+
+**`LOOT_ESCAPE_AT = 11` shipped — the lowest of 11-16 tested, and it
+already clears 25-40% (35.2% at 5000 trials, 35.55% at 10000) without
+needing to go any higher.** Full sweep table in `CALIBRATION.md`. Per
+"retiens la plus basse valeur qui y arrive, pour ne pas allonger le jeu
+plus que nécessaire" — no reason tested to prefer a larger value once the
+smallest one already clears the target.
+
+**UI**: the escape button now reads `ESCAPE — TICKET ONLY` from
+`ESCAPE_AT` and `ESCAPE — TICKET + LOOT` from `LOOT_ESCAPE_AT`, plus a
+small "`N` more to keep it" indicator shown only while carrying something
+and short of the threshold — all three conditions (`canEscape`,
+`carrying`, `escapeKeepsLoot`) read directly off the same `hud` snapshot
+fields the rest of the component already used, no new state. **Not
+manually click-verified reaching crossing 11 in a real browser** — a
+scripted Playwright keypress sequence isn't a traffic-aware player and
+died at crossing 2 in the one attempt made; building a browser-side bot
+smart enough to reliably reach crossing 11 was judged not worth the cost
+given the underlying state transitions (`escapeNow()`/`clock()`'s
+loot-keeping branches) are already exercised thousands of times by
+`rationalBot.ts`'s own trials, and the JSX itself is simple, type-checked
+conditional rendering off already-correct fields. Flagging this rather
+than claiming a click-through that didn't happen.
+
