@@ -81,13 +81,40 @@ address becomes the primary key for stats/tickets once connected; until
 then everything lives in an anonymous per-browser `localStorage` bucket
 that connecting later claims. See `DECISIONS.md #4`.
 
+## Backend (Supabase)
+
+`src/lib/supabase.ts` + `src/game/{profile,feedBus,globalDrops}.ts`.
+`localStorage` stays the fast local cache every read goes through;
+connecting a wallet reconciles it against the server once (a returning
+address's server record wins outright; a first-time connect claims the
+guest session's local progress), and writes push to Supabase
+fire-and-forget from then on. The wallet/painting/mystery-item drop
+counters are server-side and atomic (a Postgres `security definer`
+function, not a client-writable row) so they're genuinely global across
+every player, not per-run local rolls. Full schema, the RPC, and what's
+verified vs. not: `DECISIONS.md`'s P1/P2 sections.
+
+Requires two env vars — copy `.env.example` to `.env.local` for local dev,
+and set the same two in the Vercel project's Environment Variables for it
+to work in production:
+
+```
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+```
+
+Unset (locally or in a deployment that hasn't configured them yet), every
+part of the app that touches Supabase degrades to the exact local-only
+behavior it had before a backend existed — nothing crashes, nothing blocks
+starting a run, there's just no shared state.
+
 ## `/embed`
 
 A 300px, transparent, chrome-free activity ticker meant to sit on another
 page. Reuses the same feed machinery (`lines.ts`, `feedBus.ts`) the real
-in-app wire uses; currently seeded with synthetic ambient activity because
-there's no shared backend feed yet to pull real cross-visitor events from.
-See `DECISIONS.md #5`.
+in-app wire uses, reading real rows from Supabase when it's configured;
+falls back to synthetic ambient activity for local dev with no backend set
+up (never mixed with real data — see `DECISIONS.md #5` and P1).
 
 ## Project docs
 

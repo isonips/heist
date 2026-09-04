@@ -54,7 +54,7 @@ export default function ProfileTab() {
     try {
       const guestSnapshot = snapshotActive() // must run before identity switches
       const id = await via()
-      reconcileIdentity(id, guestSnapshot)
+      await reconcileIdentity(id, guestSnapshot)
       refresh()
     } catch (err) {
       setConnectError(err instanceof Error ? err.message : 'Could not connect.')

@@ -4,17 +4,20 @@ import { useEffect, useState } from 'react'
 import { theme } from '@/design/theme'
 import type { ICONS } from '@/design/sprite-data'
 import { eventIcon, type EventType } from '@/design/lines'
-import { postFeedEvent, subscribeFeed, type FeedEntry } from '@/game/feedBus'
+import { fetchRecentFeedEvents, postFeedEvent, subscribeFeed, type FeedEntry } from '@/game/feedBus'
+import { isSupabaseConfigured } from '@/lib/supabase'
 import PixelIcon from '@/components/PixelIcon'
 
 const pal = theme.palette
 const MAX_LINES = 8
+const POLL_MS = 5000
 
-// No shared backend feed exists yet (see DECISIONS.md #5) — a real embed
-// needs real cross-visitor activity. Until then this synthesises plausible
-// ambient lines client-side, through the exact same lines.ts bag-draw and
-// token substitution a real event uses, so the copy itself needs no changes
-// when a live feed replaces this generator.
+// Synthetic fallback for when there's no backend configured to read real
+// activity from (local dev without Supabase set up) — see DECISIONS.md #5
+// and P1. Whenever Supabase *is* configured this whole block is unused:
+// the effect below reads real rows from feed_events instead. Kept as a
+// fallback rather than deleted so the widget still demos something with no
+// env vars set, but it must never run alongside real data.
 const NAMES = ['kade.eth', 'moss', 'DZ', 'unclegary', 'ren.eth', 'tf2000', 'BB', 'sable']
 const AMBIENT_TYPES: EventType[] = ['cleanGetaway', 'runInProgress', 'caught', 'keptRareItem', 'wonDraw', 'itemUsed', 'outOfTime']
 
@@ -32,18 +35,28 @@ function randomTokens(type: EventType): Record<string, string | number> {
 export default function EmbedPage() {
   const [entries, setEntries] = useState<FeedEntry[]>([])
 
-  useEffect(() => subscribeFeed((entry) => setEntries((prev) => [entry, ...prev].slice(0, MAX_LINES))), [])
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return
+    let cancelled = false
+    const poll = async () => {
+      const fresh = await fetchRecentFeedEvents(MAX_LINES)
+      if (!cancelled && fresh.length) setEntries(fresh)
+    }
+    void poll()
+    const id = window.setInterval(poll, POLL_MS)
+    return () => { cancelled = true; window.clearInterval(id) }
+  }, [])
 
   useEffect(() => {
-    // Seed immediately so the widget isn't blank for the first few seconds,
-    // then keep the wire moving at a believable, uneven pace.
+    if (isSupabaseConfigured()) return undefined // real data available — the synthetic generator never runs
+    const unsubscribe = subscribeFeed((entry) => setEntries((prev) => [entry, ...prev].slice(0, MAX_LINES)))
     const fire = () => {
       const type = AMBIENT_TYPES[Math.floor(Math.random() * AMBIENT_TYPES.length)]
       postFeedEvent(type, randomTokens(type), false)
     }
     fire()
-    const id = setInterval(fire, 3500 + Math.random() * 3000)
-    return () => clearInterval(id)
+    const id = window.setInterval(fire, 3500 + Math.random() * 3000)
+    return () => { unsubscribe(); window.clearInterval(id) }
   }, [])
 
   return (

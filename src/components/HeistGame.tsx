@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { theme } from '@/design/theme'
 import { ESCAPE_AT, H, HeistRun, SCALE, TICK_MS, W, type ItemKey, type Mode } from '@/game/heistRun'
+import { buildRun } from '@/game/buildRun'
 import { postFeedEvent } from '@/game/feedBus'
 import { exportDemoLogAsFile, getDemoLog, recordDemoRun } from '@/game/demoLog'
 import { recordItemEarned } from '@/game/haulStore'
@@ -65,6 +66,11 @@ function reportResult(name: string, mode: Mode, outcome: 'collared' | 'flattened
 export default function HeistGame() {
   const [mode, setMode] = useState<'play' | 'demo' | null>(null)
   const demo = mode === 'demo'
+  // True once runRef holds a run actually built for the current mode (its
+  // painting/item rolls resolved — see buildRun.ts/P2) — false during that
+  // one async gap right after picking PLAY/DEMO or hitting RUN AGAIN. Starts
+  // true because nothing needs loading before a mode is even chosen.
+  const [ready, setReady] = useState(true)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const runRef = useRef<HeistRun>(new HeistRun())
   const nameRef = useRef<string>(getUsername() ?? `guest${Math.floor(Math.random() * 900 + 100)}`)
@@ -73,11 +79,24 @@ export default function HeistGame() {
   const [loggedRuns, setLoggedRuns] = useState(0)
   useEffect(() => { if (demo) setLoggedRuns(getDemoLog().length) }, [demo])
 
-  const restart = useCallback(() => {
-    runRef.current = new HeistRun()
+  const startMode = useCallback(async (m: 'play' | 'demo') => {
+    setMode(m)
+    setReady(false)
+    const run = await buildRun(m === 'demo')
+    runRef.current = run
     reportedRef.current = false
-    setHud(snapshot(runRef.current))
+    setHud(snapshot(run))
+    setReady(true)
   }, [])
+
+  const restart = useCallback(async () => {
+    setReady(false)
+    const run = await buildRun(demo)
+    runRef.current = run
+    reportedRef.current = false
+    setHud(snapshot(run))
+    setReady(true)
+  }, [demo])
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -95,6 +114,7 @@ export default function HeistGame() {
   }, [])
 
   useEffect(() => {
+    if (!ready) return // runRef may still be the pre-buildRun() placeholder — nothing to tick yet
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
@@ -144,7 +164,7 @@ export default function HeistGame() {
     }, TICK_MS)
 
     return () => window.clearInterval(id)
-  }, [mode, demo])
+  }, [mode, demo, ready])
 
   const ended = hud.mode === 'paid' || hud.mode === 'lost'
   const canEscape = hud.crossed >= ESCAPE_AT && !ended
@@ -166,8 +186,16 @@ export default function HeistGame() {
   if (mode === null) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center', padding: '24px 0' }}>
-        <button onClick={() => setMode('play')} style={{ ...buttonStyle, width: 200, fontSize: theme.type.size.display, padding: '14px 0' }}>PLAY</button>
-        <button onClick={() => setMode('demo')} style={{ ...buttonStyle, width: 200, fontSize: theme.type.size.display, padding: '14px 0' }}>DEMO</button>
+        <button onClick={() => void startMode('play')} style={{ ...buttonStyle, width: 200, fontSize: theme.type.size.display, padding: '14px 0' }}>PLAY</button>
+        <button onClick={() => void startMode('demo')} style={{ ...buttonStyle, width: 200, fontSize: theme.type.size.display, padding: '14px 0' }}>DEMO</button>
+      </div>
+    )
+  }
+
+  if (!ready) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '24px 0', fontFamily: theme.type.family, fontSize: theme.type.size.body, color: theme.palette.concrete }}>
+        SHUFFLING THE DECK…
       </div>
     )
   }

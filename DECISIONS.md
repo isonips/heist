@@ -304,3 +304,176 @@ past what the game itself is telling them is safe — never by playing
 rationally. What (if anything) changes about pacing, the escape mechanic, or
 the loot economy's shape as a result is the project owner's call.
 
+## P1: real backend (Supabase)
+
+**New, dedicated Supabase project ("heist", id `wzljvpoqgszhyfaquilm`, org
+"Megamble"), not one of the two existing projects in that org
+("Megamble", "Onepot").** Both already exist and are presumably serving
+other, unrelated apps under this account — mixing this game's schema into
+either would risk an unrelated app's data/migrations, for no benefit.
+Free tier (`get_cost` returned $0/month before creating it, confirmed via
+`confirm_cost` — no paid commitment made on anyone's behalf without a
+number to check).
+
+**Schema** (full SQL in the Supabase migration `initial_schema`, applied
+via the MCP tool — also readable with `list_tables`/`execute_sql` against
+project `wzljvpoqgszhyfaquilm`): `profiles` (address PK, username),
+`stats` (address PK/FK, the same six counters `ProfileStats` always had),
+`tickets_daily` (address+day composite PK, count — "today" and "best day"
+are plain aggregate queries over this now, not fields kept in sync by
+hand), `global_drop_counters` (item_key PK, games_count, threshold — one
+row per drop type, P2), `feed_events` (id, type, text, address nullable,
+self, created_at).
+
+**Architecture: localStorage stays the synchronous read path everywhere;
+every write pushes to Supabase fire-and-forget.** Rewriting every caller
+(`HeistGame.tsx`'s tick loop, `ProfileTab.tsx`) to be async throughout would
+have been the "purer" architecture, but it meant touching the tick-loop
+code that P1-P3's determinism/calibration work depended on being stable,
+under real time pressure, for a change that doesn't need it: the brief's
+own words — "localStorage n'est qu'un cache réconcilié **au chargement**"
+— already describe exactly this shape. Reconciliation
+(`reconcileIdentity()` in `profile.ts`) is the one place that's genuinely
+async (it already lived inside `ProfileTab.tsx`'s async `connect()` flow),
+and it's where "server authoritative" actually gets enforced: a returning
+address's server record overwrites the local cache outright; a new address
+claims the guest session's local progress by writing it to the server once.
+Ordinary gameplay writes (`recordGameResult`, `recordTicketWon`,
+`setUsername`) keep their exact original synchronous signatures and local
+behavior, and additionally fire an unawaited `.upsert()` when an identity
+is connected — a slow or failed push never blocks the UI or the local
+write, by design, same trust model a cache-then-reconcile system implies.
+
+**Feed moved too** (explicitly listed in the brief's P1: "bascule profil,
+statistiques, compteurs globaux **et feed** dessus"). `postFeedEvent`
+still fires the local in-memory pub/sub first (instant same-tab feedback —
+no reason to wait on a round-trip to see your own action), and additionally
+inserts into `feed_events` when `self=true` — ambient/system placeholder
+lines (`self=false`) are never written to shared storage, since they aren't
+real plays and would pollute real data with fake ones. `FeedWindow.tsx`
+polls `feed_events` every 6s and merges new rows in (deduped against
+recent local entries by text-within-20s, so a message this tab just sent
+doesn't double up once the poll reads it back). Chose polling over a
+Supabase Realtime channel: simpler, no subscription lifecycle to manage,
+and entirely adequate at a feed's actual pace — nothing here needs
+sub-second latency.
+
+**The typed chat message itself (the `you: {text}` line, not the flavour
+line `postFeedEvent` already draws) is not pushed to the server.** It was
+already local-only before this session and stays that way — broadcasting
+free-text player input to every viewer is a moderation-relevant decision
+("$0.10" in the composer's placeholder implies a real payment gate that
+doesn't exist yet either) that P1's "move the feed onto Supabase" doesn't,
+on its own, obviously include. Narrower scope, flagged rather than silently
+expanded.
+
+**`/embed` now reads real `feed_events` rows** (polling, same pattern as
+`FeedWindow`) instead of generating synthetic activity — but only when
+Supabase is configured; the synthetic generator from the earlier `/embed`
+work stays as a fallback for local dev with no env vars set, gated so it
+can never run alongside real data (checked once via `isSupabaseConfigured()`,
+not per-row).
+
+**I could not verify the live client integration end-to-end from inside
+this sandbox — flagging this plainly rather than claiming a test that
+didn't happen.** This environment's egress proxy rejects the Supabase
+project's host outright (confirmed both from a Playwright-driven browser
+and a plain Node script: `"Host not in allowlist:
+wzljvpoqgszhyfaquilm.supabase.co"`), while the Supabase MCP tool itself
+reaches the same project fine — it evidently goes through a different,
+privileged channel than this sandbox's general internet egress. So: the
+**schema and the RPC function are verified directly** (`apply_migration`
+succeeded, `list_tables` shows all 5 tables with RLS on, `execute_sql`
+round-tripped `roll_global_drop()` and confirmed it increments correctly).
+The **client code is typechecked, lint-clean, and follows
+`@supabase/supabase-js`'s standard patterns** (`createClient` +
+`.from().select/.insert/.upsert()` + `.rpc()`) throughout. What's
+**not verified** is a real browser successfully calling out to
+`wzljvpoqgszhyfaquilm.supabase.co` and a row landing in the table — that
+needs testing somewhere with normal internet access (the deployed Vercel
+app, or a future session without this sandbox's allowlist). One thing this
+sandboxed test *did* confirm usefully: when the network call fails
+outright, `buildRun()` still resolves and the run still starts
+(`rollGlobalDrop()`'s try/catch returns `false` rather than throwing) — the
+graceful-degradation path this was designed around held up under an actual
+failure, not just in theory.
+
+**Env vars**: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+(`.env.example` added, `.env.local` set locally for this session's own
+`npm run build` checks, gitignored as usual). These are **not set in
+Vercel** by me — no tool in this session can write Vercel project
+environment variables, and this is exactly the kind of external-config gap
+the brief says to stub and flag rather than block on: `getSupabase()`
+returns `null` when they're absent, and every caller already degrades to
+the pre-P1 local-only behavior in that case, so the deployed app keeps
+working (guest-only, local storage, no shared counters) until someone adds
+the two values to the Vercel project settings. README.md documents this.
+
+## P2: global drop counters, server-side
+
+**One `global_drop_counters` row per drop type — the painting (already had
+exactly this model client-side, `paintingStore.ts`) plus, new, each of the
+five mystery items**, which previously used an independent per-run Bernoulli
+roll off the seeded `itemRng` stream (`ITEM_ODDS`) — explicitly *not* a
+global counter, and exactly what the brief says must not be true anymore
+("jamais de la performance individuelle").
+
+**The roll is a `security definer` Postgres function
+(`roll_global_drop(item_key) returns boolean`), not a client
+read-then-write.** `global_drop_counters` has a `select`-only RLS policy for
+anon — no insert/update/delete grant at all — so the function is the *only*
+path that can change a row, and it does the increment-and-maybe-reset
+atomically inside one `for update`-locked transaction. This is the one
+place in this whole session's backend where I actually hardened something
+past "same trust level localStorage already had": a client can no longer
+inflate its own drop odds by manipulating a client-side counter, because
+there isn't one anymore — the number that matters lives only in a table
+the client can't write to directly.
+
+**Thresholds are randomised ranges chosen so the long-run mean matches the
+original `ITEM_ODDS`** (e.g. `oldMan` 1/12 → threshold uniform in [8,16],
+mean 12; `haul` 1/2400 → [1600,3200], mean 2400) — same spirit as
+`paintingStore.ts`'s existing 50-150 range for the painting, extended to
+the other five. This preserves each item's original *rarity feel* while
+changing *what it's a rarity of* (games played globally, not one player's
+own run) — the actual point of P2.
+
+**`HeistRun` gained an optional 4th constructor param, `itemRoll?: (item:
+ItemKey) => boolean`, mirroring how `paintingRoll` already worked.** Left
+undefined, the class falls back to its existing local seeded behavior
+(`itemRng`) exactly as before — this is what the harness, `replay()`, and
+every determinism/calibration test still use, unchanged, on purpose: those
+need to stay pure and offline regardless of whether a backend exists.
+`itemRng` still independently decides *where* an item appears (`nextInt`
+for board position) even when `itemRoll` is supplied — only the *whether/
+which* decision moved.
+
+**Async pre-fetch happens *before* `HeistRun` is constructed, never inside
+it** (`src/game/buildRun.ts`): the mode-select screen already had a natural
+async boundary (picking PLAY/DEMO, or hitting RUN AGAIN), so a real
+Supabase-backed session calls `roll_global_drop` for all 6 drop types via
+one `Promise.all` there, then constructs `new HeistRun(seed, () =>
+paintingHit, false, (item) => itemResults.get(item))` with everything
+already resolved to plain synchronous closures. This was the one
+non-negotiable constraint: `HeistRun`'s constructor, `advance()`, and
+`replay()` all had to stay 100% synchronous no matter what — making
+construction itself async would have broken `replay()`'s "pure, DOM-free"
+contract and the whole determinism-test harness this session's priority 1
+was built around. `HeistGame.tsx` shows "SHUFFLING THE DECK…" for the ~0
+(no backend)–300ms (backend configured) gap this adds before a run starts.
+
+**DEMO never touches the global counters, backend configured or not.**
+Stakes:false means no ticket, no wallet payout, no ledger write (true since
+before P1) — rolling the shared counters for a run that structurally can't
+bank anything would just spend real players' shared, finite-feeling rarity
+budget on nothing. `buildRun(demo, seed)` checks `demo` first and returns
+`new HeistRun(seed)` (local defaults) immediately, without calling
+`globalDrops.ts` at all.
+
+**`haulStore.ts` (per-player counts of items *earned*, for a display that
+was already removed earlier this session — see the MY HAUL section) was
+not migrated to Supabase.** It's a personal stat, not a global counter — no
+fairness-across-players concern the way item *rarity* has — and nothing
+currently displays it. Left local-only; would follow the same `profile.ts`
+pattern later if the display ever comes back.
+

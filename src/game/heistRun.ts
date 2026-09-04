@@ -128,6 +128,15 @@ export class HeistRun {
   // own contract. Injected so replay()/tests can pin it instead of touching
   // shared localStorage.
   private paintingRoll: () => boolean
+  // Same idea as paintingRoll, for mystery items: undefined keeps the
+  // built-in local behavior (a per-run roll off the seeded itemRng stream
+  // — what the harness/replay/tests always use, and what real play falls
+  // back to when there's no backend configured). A real, backend-backed
+  // play session passes a per-item lookup resolved from a global counter
+  // on the server (P2, src/game/globalDrops.ts) instead — this only
+  // decides *whether/which* item drops; itemRng still decides *where* it
+  // appears, regardless of which source answered the drop question.
+  private itemRoll?: (item: ItemKey) => boolean
   // Solver-only: ignores collisions and the police catch trigger while
   // still running every other tick of real logic (traffic, hopping,
   // pickups) unchanged — this is what "perfect play, ignoring lives and
@@ -176,13 +185,14 @@ export class HeistRun {
   private alertBags: Record<string, string[]> = {}
   private ac: AudioContext | null | undefined
 
-  constructor(seed?: number, paintingRoll: () => boolean = rollPaintingDrop, invincible = false) {
+  constructor(seed?: number, paintingRoll: () => boolean = rollPaintingDrop, invincible = false, itemRoll?: (item: ItemKey) => boolean) {
     // >>> 0 folds a negative/float/out-of-range caller value into a valid
     // uint32 the same way rngFromSeed does, so this.seed always matches what
     // the domain streams were actually derived from.
     this.seed = seed !== undefined ? seed >>> 0 : (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0
     this.paintingRoll = paintingRoll
     this.invincible = invincible
+    this.itemRoll = itemRoll
     this.newRun()
   }
 
@@ -382,11 +392,21 @@ export class HeistRun {
     this.lootPlan = plan
   }
 
-  /** Stand-in for the real drop mechanic (a global counter across every
-   *  player's crossings — needs the phase-3 backend this app doesn't have
-   *  yet). One independent roll per run, same odds as the prototype's own
-   *  ODDS table, checked rarest-last so a legendary roll doesn't get
-   *  silently overwritten by a common one rolling true in the same run. */
+  /** Whether/which item drops this run: itemRoll if the caller supplied one
+   *  (P2 — a real play session resolves this from the server's global
+   *  counter before construction, see globalDrops.ts), else the built-in
+   *  local stand-in — one independent roll per run off the seeded itemRng
+   *  stream, same odds as the prototype's own ODDS table, checked
+   *  rarest-first so a legendary roll doesn't get silently overwritten by a
+   *  common one rolling true in the same run. Either way, itemRng alone
+   *  still decides *where* a drop appears — see rollItem() below. */
+  private rollItemHit(item: ItemKey): boolean {
+    if (this.itemRoll) return this.itemRoll(item)
+    let hit: boolean
+    ;[hit, this.itemRng] = nextChance(this.itemRng, ITEM_ODDS[item])
+    return hit
+  }
+
   private rollItem(): void {
     const stops = this.bands.map((b, i) => (b.k === 'stop' ? i : -1)).filter((i) => i >= 0)
     if (!stops.length) { this.itemPlan = null; return }
@@ -394,9 +414,7 @@ export class HeistRun {
     const pool = preferred.length ? preferred : stops
     for (let k = ITEM_ORDER.length - 1; k >= 0; k--) {
       const item = ITEM_ORDER[k]
-      let hit: boolean
-      ;[hit, this.itemRng] = nextChance(this.itemRng, ITEM_ODDS[item])
-      if (hit) {
+      if (this.rollItemHit(item)) {
         let pick: number
         ;[pick, this.itemRng] = nextInt(this.itemRng, pool.length)
         this.itemPlan = { index: pool[pick], item }

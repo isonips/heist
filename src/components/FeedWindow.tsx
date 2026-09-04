@@ -4,15 +4,18 @@ import { useEffect, useState } from 'react'
 import { theme } from '@/design/theme'
 import type { ICONS } from '@/design/sprite-data'
 import { eventIcon, type EventType } from '@/design/lines'
-import { postFeedEvent, subscribeFeed, type FeedEntry } from '@/game/feedBus'
+import { fetchRecentFeedEvents, postFeedEvent, subscribeFeed, type FeedEntry } from '@/game/feedBus'
+import { isSupabaseConfigured } from '@/lib/supabase'
 import PixelIcon from './PixelIcon'
 
 const pal = theme.palette
 const MAX_LINES = theme.feed.maxLines
 const FEED_TEXT = theme.type.size.feed
+const POLL_MS = 6000
 
-// A few ambient system entries so the wire doesn't sit empty before any real
-// local run has finished — clearly generic, never claiming a specific player.
+// Shown only when there's no backend to read real activity from (local dev
+// without Supabase configured) — never mixed with real rows once one exists,
+// so nothing here can be mistaken for something that actually happened.
 const AMBIENT: FeedEntry[] = [
   { id: -1, type: 'runInProgress', text: 'someone is making a run for it — 6 and counting', self: false, at: Date.now() },
   { id: -2, type: 'cleanGetaway', text: 'kade.eth is in the wind with 11 crossings', self: false, at: Date.now() },
@@ -23,7 +26,7 @@ export default function FeedWindow() {
   // game's own controls on a narrower window. "Collapsible to just the title
   // bar so it never gets in the way" (design brief) argues for starting there.
   const [collapsed, setCollapsed] = useState(true)
-  const [entries, setEntries] = useState<FeedEntry[]>(AMBIENT)
+  const [entries, setEntries] = useState<FeedEntry[]>(() => (isSupabaseConfigured() ? [] : AMBIENT))
   const [pulse, setPulse] = useState(false)
   const [draft, setDraft] = useState('')
   // Mobile: "the window becomes a collapsed bar at the bottom of the
@@ -46,6 +49,35 @@ export default function FeedWindow() {
       }
     })
   }, [collapsed])
+
+  // P1: real cross-tab/cross-player activity, polled rather than pushed —
+  // simpler and reliable enough for a ticker at this pace, no realtime
+  // channel to open/clean up. A row this tab just posted itself (via the
+  // subscribeFeed effect above) is skipped by matching text within a short
+  // window, so sending something doesn't double it up once the next poll
+  // reads it back from the server.
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return
+    let cancelled = false
+    const poll = async () => {
+      const fresh = await fetchRecentFeedEvents(MAX_LINES)
+      if (cancelled || !fresh.length) return
+      setEntries((prev) => {
+        const recentText = new Set(prev.filter((e) => Date.now() - e.at < 20000).map((e) => e.text))
+        const merged = [...prev]
+        for (const row of fresh) {
+          if (merged.some((e) => e.id === row.id)) continue
+          if (recentText.has(row.text)) continue
+          merged.push(row)
+        }
+        merged.sort((a, b) => b.at - a.at)
+        return merged.slice(0, MAX_LINES)
+      })
+    }
+    void poll()
+    const id = window.setInterval(poll, POLL_MS)
+    return () => { cancelled = true; window.clearInterval(id) }
+  }, [])
 
   const send = () => {
     const text = draft.trim()
