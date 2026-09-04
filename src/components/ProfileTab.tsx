@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { theme } from '@/design/theme'
 import { ESCAPE_AT } from '@/game/heistRun'
-import { ENTRY_FEE_USDG, getBestDay, getStats, getTicketsToday, getUsername, setUsername, type ProfileStats } from '@/game/profile'
+import { connectInjected, connectPrivy, disconnect as disconnectWallet, getIdentity, hasInjectedWallet, type Identity } from '@/game/identity'
+import { ENTRY_FEE_USDG, getBestDay, getStats, getTicketsToday, getUsername, reconcileIdentity, setUsername, snapshotActive, type ProfileStats } from '@/game/profile'
 
 const pal = theme.palette
 const BODY = theme.type.size.body
@@ -18,8 +19,12 @@ export default function ProfileTab() {
   const [stats, setStats] = useState<ProfileStats | null>(null)
   const [tickets, setTickets] = useState(0)
   const [bestDay, setBestDay] = useState(0)
+  const [identity, setIdentity] = useState<Identity | null>(null)
+  const [connecting, setConnecting] = useState(false)
+  const [connectError, setConnectError] = useState<string | null>(null)
+  const [injectedAvailable, setInjectedAvailable] = useState(false)
 
-  useEffect(() => {
+  const refresh = useCallback(() => {
     const existing = getUsername()
     setName(existing ?? '')
     setDraft(existing ?? '')
@@ -27,7 +32,13 @@ export default function ProfileTab() {
     setStats(getStats())
     setTickets(getTicketsToday())
     setBestDay(getBestDay())
+    setIdentity(getIdentity())
   }, [])
+
+  useEffect(() => {
+    refresh()
+    setInjectedAvailable(hasInjectedWallet())
+  }, [refresh])
 
   const save = () => {
     const trimmed = draft.trim()
@@ -37,9 +48,65 @@ export default function ProfileTab() {
     setEditing(false)
   }
 
+  const connect = async (via: () => Promise<Identity>) => {
+    setConnecting(true)
+    setConnectError(null)
+    try {
+      const guestSnapshot = snapshotActive() // must run before identity switches
+      const id = await via()
+      reconcileIdentity(id, guestSnapshot)
+      refresh()
+    } catch (err) {
+      setConnectError(err instanceof Error ? err.message : 'Could not connect.')
+    } finally {
+      setConnecting(false)
+    }
+  }
+
+  const disconnect = () => {
+    disconnectWallet()
+    refresh()
+  }
+
   return (
     <div style={{ fontFamily: theme.type.family, color: pal.pale, fontSize: BODY, lineHeight: theme.type.lineHeight.read }}>
-      <h3 style={{ color: pal.amber, fontSize: BODY, fontWeight: 700, marginTop: 0 }}>Username</h3>
+      <h3 style={{ color: pal.amber, fontSize: BODY, fontWeight: 700, marginTop: 0 }}>Wallet</h3>
+      {identity ? (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ color: pal.gold }}>
+            {identity.address.slice(0, 6)}…{identity.address.slice(-4)}
+            <span style={{ color: pal.concrete, fontSize: FEED }}> ({identity.source})</span>
+          </span>
+          <button onClick={disconnect} style={buttonStyle}>DISCONNECT</button>
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={() => connect(connectInjected)}
+              disabled={connecting || !injectedAvailable}
+              style={{ ...buttonStyle, opacity: connecting || !injectedAvailable ? 0.5 : 1 }}
+            >
+              {injectedAvailable ? 'CONNECT WALLET' : 'NO WALLET FOUND'}
+            </button>
+            <button
+              onClick={() => connect(connectPrivy)}
+              disabled={connecting}
+              title="Not configured in this environment"
+              style={{ ...buttonStyle, background: pal.chrome, color: pal.concrete, opacity: 0.6 }}
+            >
+              PRIVY (SOON)
+            </button>
+          </div>
+          {connectError && <p style={{ color: pal.sirenRed, fontSize: FEED, marginTop: 4 }}>{connectError}</p>}
+          <p style={{ color: pal.concrete, fontSize: FEED, marginTop: 4 }}>
+            Progress below is local to this browser until you connect. Connecting a wallet for the
+            first time claims it under that address; a returning address keeps its own record.
+          </p>
+        </>
+      )}
+
+      <h3 style={{ color: pal.amber, fontSize: BODY, fontWeight: 700, marginTop: 16 }}>Username</h3>
       {editing ? (
         <div style={{ display: 'flex', gap: 8 }}>
           <input

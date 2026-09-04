@@ -158,3 +158,40 @@ conflating them again risked repeating the earlier mistake (documented in
 lowering `POLICE_MAX_LEAD_S` directly suppressed reinforcement by preventing
 lead from ever growing large enough to arm it.
 
+## 4. Identity
+
+**Privy is stubbed; the injected-wallet path is real.** No Privy app ID is
+configured in this environment (no API key, per the session's own
+instruction to stub what's missing and move on) — `connectPrivy()` in
+`src/game/identity.ts` always rejects, with a message that says exactly
+that. `connectInjected()` needed no key at all: `window.ethereum` is either
+there or it isn't, and `eth_requestAccounts` is a standard EIP-1193 call, so
+that path is genuinely functional today, not just scaffolding — it's the one
+button on the Profile tab that actually connects a real wallet. Both
+functions return the same `Identity` shape (`{ address, source }`), so
+wiring in `@privy-io/react-auth` later replaces one function body, not any
+call site in `profile.ts` or `ProfileTab.tsx`.
+
+**"The server is authoritative" is honoured as a *shape*, not a real
+backend.** There is no database or API route to be authoritative from in
+this session (provisioning one — e.g. via the Supabase MCP tool available
+here — is real infrastructure I'm not standing up unilaterally without the
+project owner's go-ahead, especially mid-session with nobody watching).
+What ships instead: `localStorage` keys scoped by address
+(`heist-stats-v1::0xabc...`) stand in for "a row keyed by address on a
+server," and `reconcileIdentity()` implements the actual policy that
+matters regardless of what's behind it — a returning address's own record
+always wins over the guest bucket; a first-time connect claims whatever was
+played as a guest, once, not on every reconnect. When a real backend
+exists, `profile.ts`'s functions (`getStats`, `recordGameResult`, etc.) are
+the only things that need their bodies swapped from `localStorage` calls to
+network calls — every call site elsewhere in the app is already written
+against "read/write the active profile," not against `localStorage`
+directly.
+
+**Existing guest data isn't touched or migrated automatically.** Someone
+who's been playing without connecting keeps using the same unscoped keys
+(`heist-stats-v1`, no `::address` suffix) this file always used — nothing
+about this change requires or forces a connection. Reconciliation only ever
+runs at the moment of an explicit connect click.
+
