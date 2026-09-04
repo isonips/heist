@@ -556,3 +556,24 @@ loot-keeping branches) are already exercised thousands of times by
 conditional rendering off already-correct fields. Flagging this rather
 than claiming a click-through that didn't happen.
 
+## P1: still not verifiable from this session
+
+Re-checked before doing anything else, per "si les variables ne sont
+toujours pas là, note-le et passe à P2": this sandbox's egress proxy still
+rejects `wzljvpoqgszhyfaquilm.supabase.co` outright (re-confirmed with a
+fresh `curl`, same `connect_rejected`/organization-policy result as last
+session — the restriction didn't lift). Also checked whether the Vercel
+env vars might have been added since: `list_teams` (Vercel MCP) returns no
+teams for this session, so there's no path here to list or read the
+project's environment variables either, to even know whether they're set.
+
+**Both blockers are independent, and either one alone would already make
+the P1 checklist impossible from here**: no visibility into whether the
+Vercel vars are set, and even if they were, this sandbox still can't reach
+Supabase to run the actual checks (a game writing to the five tables, the
+RPC incrementing, `/embed` showing real rows, cross-browser reconciliation
+via an address). Noting this and moving to P2, per the fallback
+instruction — the schema/RPC-level verification from last session
+(`DECISIONS.md`'s earlier P1 entry) still stands as what has been checked;
+nothing new was checkable this pass.
+
