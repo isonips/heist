@@ -72,6 +72,7 @@ export type BotTrialResult = {
  *  actually wanted here. */
 export function runBotTrial(seed?: number, paintingRoll: () => boolean = () => false): BotTrialResult {
   const run = new HeistRun(seed, paintingRoll)
+  run.soundOn = false // headless in Node; when run live in a browser (e.g. /stats), this stops it from opening a real AudioContext per trial
   let leadAtSeventhS: number | null = null
   let ticks = 0
 

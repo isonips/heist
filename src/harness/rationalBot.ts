@@ -49,6 +49,7 @@ export type RationalTrialResult = {
   seed: number
   ticketed: boolean // mode === 'paid', regardless of what (if anything) came with it
   lootAvailable: boolean
+  lootPickedUp: boolean // ever picked up this run, regardless of whether it was kept
   lootKept: boolean // loot was available AND banked (ticketed with hands !== 'ticket')
   crossed: number
   outcome: string
@@ -69,6 +70,7 @@ export type RationalTrialResult = {
 // apart — see CALIBRATION.md's P0 sweep for how this was actually run.
 export function runRationalBotTrial(seed?: number, paintingRoll: () => boolean = () => false, lootEscapeAt: number = LOOT_ESCAPE_AT, safeLeadS: number = SAFE_LEAD_S): RationalTrialResult {
   const run = new HeistRun(seed, paintingRoll)
+  run.soundOn = false // headless in Node; when run live in a browser (e.g. /stats), this stops it from opening a real AudioContext per trial
   const lootAvailable = Object.keys(run.lootPlan).length > 0
   let ticks = 0
   let tickAtTenth: number | null = null
@@ -114,6 +116,7 @@ export function runRationalBotTrial(seed?: number, paintingRoll: () => boolean =
     seed: run.seed,
     ticketed,
     lootAvailable,
+    lootPickedUp: run.pickedUpLootEver,
     lootKept: ticketed && run.state.hands !== 'ticket',
     crossed: run.state.crossed,
     outcome: ticketed ? 'ticketed' : run.state.outcome,

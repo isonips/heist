@@ -55,11 +55,13 @@ export type GreedyTrialResult = {
   seed: number
   lootAvailable: boolean
   lootPickedUp: boolean
+  lootKept: boolean
   result: Result
 }
 
 export function runGreedyBotTrial(seed?: number, paintingRoll: () => boolean = () => false): GreedyTrialResult {
   const run = new HeistRun(seed, paintingRoll)
+  run.soundOn = false // headless in Node; when run live in a browser (e.g. /stats), this stops it from opening a real AudioContext per trial
   const lootAvailable = Object.keys(run.lootPlan).length > 0
   let ticks = 0
   while (run.live() && ticks < MAX_TICKS) {
@@ -78,7 +80,11 @@ export function runGreedyBotTrial(seed?: number, paintingRoll: () => boolean = (
     ticks,
     seed: run.seed,
     lootAvailable,
-    lootPickedUp: Object.keys(run.state.taken).length > 0,
+    // pickedUpLootEver (not state.taken, which a LOOT_ESCAPE_AT forfeiture
+    // now clears — see heistRun.ts) so this stays "was it ever picked up"
+    // regardless of whether it was later kept.
+    lootPickedUp: run.pickedUpLootEver,
+    lootKept: win && run.state.hands !== 'ticket',
     result: resultOf(run),
   }
 }

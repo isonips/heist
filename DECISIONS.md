@@ -577,3 +577,88 @@ instruction — the schema/RPC-level verification from last session
 (`DECISIONS.md`'s earlier P1 entry) still stands as what has been checked;
 nothing new was checkable this pass.
 
+## P2: demo telemetry + /stats comparison page
+
+**`pickedUpLootEver`.** The P0 change made `state.taken`/`state.hands`
+forfeitable on a no-loot clock timeout, not just on an early `escapeNow()`
+— which broke `lootPickedUp` telemetry that used to read those fields
+directly (`greedyBot.ts` was doing `Object.keys(run.state.taken).length >
+0`, and `measure.ts`'s `lootKeptRateGreedy` was doing `lootPickedUp &&
+win`). Added a dedicated `pickedUpLootEver` flag on `HeistRun`, set once
+inside `pickUp()`'s loot branch and never cleared by forfeiture — it
+answers "did this run ever hold loot" independently of whether the loot
+survived to the end. Propagated to `greedyBot.ts` (fixed its
+`lootPickedUp` source, added an explicit `lootKept` field instead of
+inferring it) and `rationalBot.ts` (added `lootPickedUp`, already had
+`lootKept`). Fixed `measure.ts`'s `lootKeptRateGreedy` to read the new
+`lootKept` field directly rather than recombining a now-decoupled pair.
+
+**`demo_runs` table.** Same shape as the harness bots' own trial results
+(seed, crossings, heartsLost, lootAvailable/lootPickedUp/lootKept,
+outcome, ticks) plus the full `actions`/`inputs` logs already kept
+locally, so a demo run is replayable server-side later if needed. No
+`address` column — DEMO is `stakes:false` and was never wallet-gated, so
+there's no identity to key it to; it's anonymous by design, same as
+`feed_events`. RLS: open insert and open select (any anon key can write
+and read), matching `feed_events`'s existing policy shape — this is
+low-stakes telemetry, not the address-keyed `profiles`/`stats` tables.
+`demoLog.ts`'s `recordDemoRun()` keeps writing to `localStorage` first
+(export-as-JSON still works fully offline) and fire-and-forget pushes to
+Supabase after, same pattern as `profile.ts`/`feedBus.ts`. Migration
+applied directly via the Supabase MCP tool (this sandbox can't reach the
+project over plain network, but the MCP tool uses a separate privileged
+channel — same asymmetry noted in the P1 entries above).
+
+**`/stats` page.** Unlisted route, no auth — nothing in the app's own nav
+links to it, which is what the brief offered as the alternative to
+building real access control for an internal measurement page. Renders
+one table: humans (real `demo_runs` rows, all browsers) against the three
+harness bots, same columns (n, median/p95 crossings, success rate, loot
+pickup rate, loot kept rate). The bots run live in the page's own browser
+tab rather than showing numbers copied from `CALIBRATION.md` — `bot.ts`/
+`greedyBot.ts`/`rationalBot.ts` are pure functions over `HeistRun` with no
+Node-only dependencies, so nothing stops them running client-side.
+
+Two bugs found and fixed during Playwright verification, both worth
+recording because neither was in the original design:
+
+1. **Fetch blocked the whole page.** The first version `await`ed
+   `fetchAggregateDemoRuns()` (a Supabase call, which just hangs in this
+   sandbox — see P1) before running any bot trial, so the page never got
+   past "loading" here. Fixed by splitting into two independent
+   `useEffect`s: bot trials run and render immediately in one; the human
+   fetch runs in the other, wrapped in a 6s `Promise.race` timeout, and
+   updates its own row independently once it settles or times out. In a
+   real deployment with Supabase reachable this fetch would resolve in
+   well under 6s, so the split costs nothing there — it only fixes the
+   pathological case of an unreachable/misconfigured backend.
+2. **Bot trials never turned sound off, so running live in a browser tab
+   opened up to 1500 real `AudioContext`s.** `bot.ts`/`greedyBot.ts`/
+   `rationalBot.ts` construct their own internal `HeistRun` and were never
+   told to mute it. In the CLI harness this is invisible — `HeistRun`'s
+   `audio()` bails out immediately when `window` is undefined, so the
+   calibration sweeps (thousands of trials in milliseconds) never touch
+   Web Audio at all. But `/stats` runs the same trial functions inside a
+   real browser tab, where `window` *is* defined — every crossing/alert/
+   arrest event during a trial synthesised real tones through a freshly
+   constructed, never-closed `AudioContext`. 500 trials x 3 bots was still
+   short of a table 30+ seconds later; the page read as hung, and an
+   earlier Playwright pass actually crashed the tab outright. First
+   suspected the cause was 1500 synchronous playthroughs blocking the
+   main thread and added a `runChunked()` yield-every-40 helper — real
+   and worth keeping regardless (it's what keeps the tab responsive while
+   this runs), but it didn't fix the actual hang, which was audio graph
+   construction, not compute. Fixed at the source: all three bot-trial
+   functions now set `run.soundOn = false` immediately after constructing
+   their `HeistRun`, before the first tick — a no-op in the CLI harness
+   (already silent there) and the fix for the browser case. With both
+   fixes in place the page renders in ~5s for 1500 total trials.
+
+`BOT_TRIALS = 500` and `CHUNK_SIZE = 40` were sized empirically against
+this sandbox's Playwright/headless-Chromium tab, not measured against a
+real desktop browser — noting this in case `/stats` ever needs raising
+past 500 for tighter confidence intervals; nothing suggests it will be
+slower on a real machine; 500 was not reduced despite the earlier
+(pre-audio-fix) appearance of trouble, since the root cause turned out to
+be a real bug rather than a sandbox-specific resource limit.
+

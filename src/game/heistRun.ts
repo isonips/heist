@@ -183,6 +183,9 @@ export class HeistRun {
   trafficFrozenUntilTick = -1
   itemEffectBanner: { item: ItemKey; untilTick: number } | null = null
   usedItemsThisRun: ItemKey[] = []
+  // Telemetry only (P2's lootPickupRate) — survives loot forfeiture on
+  // purpose, unlike state.taken. See pickUp().
+  pickedUpLootEver = false
   furn: Record<number, { kind: string; x: number }[]> = {}
   rein: { t: number; x: number; wy: number; phase: 'in' | 'stop' | 'out' } | null = null
   reinDone = false
@@ -347,6 +350,7 @@ export class HeistRun {
     this.trafficFrozenUntilTick = -1
     this.itemEffectBanner = null
     this.usedItemsThisRun = []
+    this.pickedUpLootEver = false
     this.rein = null
     this.reinDone = false
     this.reinBanner = 0
@@ -501,6 +505,12 @@ export class HeistRun {
         walletAmount = 10 + amountRoll // 10-50, nominal points
       }
       this.state = { ...this.state, taken, hands, walletOutcome, walletAmount }
+      // Unlike state.taken/hands, this never gets wiped by a no-loot
+      // escape/timeout forfeiture — it's telemetry ("was loot ever picked
+      // up this run", for P2's human-vs-bot lootPickupRate), not gameplay
+      // state, so it has to survive the same forfeiture that state.taken
+      // doesn't.
+      this.pickedUpLootEver = true
     }
     const item = this.itemAt(this.bi)
     if (item && Math.abs((this.tx + 11) - (this.itemX(this.bi) + 4)) <= 14) {

@@ -31,7 +31,7 @@ const greedy = seeds.map((s) => runGreedyBotTrial(s))
 const greedyCrossings = greedy.map((r) => r.crossed)
 const lootRuns = greedy.filter((r) => r.lootAvailable)
 const lootPickupRate = lootRuns.length ? lootRuns.filter((r) => r.lootPickedUp).length / lootRuns.length : 0
-const lootKeptRateGreedy = lootRuns.length ? lootRuns.filter((r) => r.lootPickedUp && r.win).length / lootRuns.length : 0
+const lootKeptRateGreedy = lootRuns.length ? lootRuns.filter((r) => r.lootKept).length / lootRuns.length : 0
 
 // impossibleShare uses its own seed range (offset well clear of the ones
 // above) purely so a curious reader diffing seed lists doesn't wonder why

@@ -149,12 +149,17 @@ export default function HeistGame() {
         if (demo) {
           const total = recordDemoRun({
             runId: run.runId,
+            seed: run.seed,
             startedAt: new Date(run.startedAtMs).toISOString(),
             crossings: run.state.crossed,
             heartsLost: 3 - run.lives(),
+            lootAvailable: Object.keys(run.lootPlan).length > 0,
+            lootPickedUp: run.pickedUpLootEver,
+            lootKept: run.state.mode === 'paid' && run.state.hands !== 'ticket',
             result: { mode: run.state.mode, outcome: run.state.outcome },
             ticks: run.tick,
             inputs: run.inputLog,
+            actions: run.actionLog,
           })
           setLoggedRuns(total.length)
         } else {
