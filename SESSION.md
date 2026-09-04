@@ -1,12 +1,17 @@
 # Session summary
 
-Two working sessions on the same brief, continued in one file. First pass:
-one seeded engine (`src/engine/` dead code deleted), a difficulty/RNG
+Three working sessions on the same brief, continued in one file. First
+pass: one seeded engine (`src/engine/` dead code deleted), a difficulty/RNG
 measurement pass, reinforcement retuned, address-based identity (stubbed),
-`/embed`, a splash screen. Second pass (this one): two of the first pass's
-metric targets confirmed invalid and dropped, a third bot answering "is the
-loot actually playable" (P0), and a real backend (Supabase) for profile/
-stats/feed/global drop counters (P1, P2). Details and reasoning for every
+`/embed`, a splash screen. Second pass: two of the first pass's metric
+targets confirmed invalid and dropped, a third bot answering "is the loot
+actually playable" (P0 — found `lootKeptRate` 0%, reported as a design
+finding), and a real backend (Supabase) for profile/stats/feed/global drop
+counters (P1, P2). Third pass (this one): the P0 finding acted on by
+changing the conservation rule itself (loot banked by pushing past a
+threshold, not by surviving the whole clock), P1 re-checked and still
+blocked from this sandbox, and demo-run telemetry + an unlisted
+human-vs-bot comparison page (P2). Details and reasoning for every
 non-obvious call are in `DECISIONS.md`; tuning history and every measured
 number is in `CALIBRATION.md`.
 
@@ -37,7 +42,7 @@ checked before each one, not just at the end.
   police pressure (`successRate` 60-61%, in the target band the
   reinforcement retune aimed at) — pushing a third of maps into
   unwinnable-by-anyone would be worse, not better.
-- **P0, new this session: is the loot actually playable?**
+- **P0 (session 2): is the loot actually playable?**
   `src/harness/rationalBot.ts` plays to maximize expected value — seeks
   loot, then re-evaluates every tick after crossing 10 whether to escape
   (lock the ticket) or hold (risk it to bank loot too), using the game's
@@ -46,9 +51,25 @@ checked before each one, not just at the end.
   alert-threshold range (3.4s–13s tested).** Median lead is already ~7s by
   crossing 10 — below every threshold tested — so "armed" and "comfortably
   safe" never coincide; the rational move is always to escape immediately.
-  No changes made in response, per instruction — reported as a design
-  finding. **This is the one item most worth the project owner's own
-  look**, more than the two dropped metrics above.
+  No changes made in that session, per instruction — reported as a design
+  finding for the project owner.
+- **P0 (session 3): the finding above acted on — `LOOT_ESCAPE_AT`.**
+  Conservation no longer requires surviving the whole open clock; it
+  requires escaping (or timing out) at or past a second, later crossing
+  threshold. Swept `LOOT_ESCAPE_AT` 11–16 with the rational bot; caught and
+  fixed a real methodological bug before trusting the first (flat-zero)
+  result — the bot's inherited `SAFE_LEAD_S=13` interrupt threshold, tuned
+  for the old open-ended goal, was firing on the very first tick after
+  arming regardless of the new threshold, so the bot never even attempted
+  the later crossings. Changed the bot's policy for this bounded goal
+  (commit once armed if there's pending value, don't second-guess every
+  tick — `SAFE_LEAD_S=0`), re-swept, and got real, varying numbers.
+  **Shipped `LOOT_ESCAPE_AT = 11`** — the lowest value clearing the 25–40%
+  target band (`lootKeptRate` 37.4% at 11; full table in `CALIBRATION.md`).
+  UI: the escape button now reads `ESCAPE — TICKET ONLY` vs.
+  `ESCAPE — TICKET + LOOT` depending on `hud.crossed`, with a "N more to
+  keep it" counter while carrying something short of the threshold. Full
+  reasoning: `DECISIONS.md`'s "P0: LOOT_ESCAPE_AT" entry.
 
 ## Reinforcement — done (session 1)
 
@@ -104,7 +125,11 @@ README.md replaced entirely; updated again this session for the backend.
   starts) when the network call fails. **Needs one real smoke test
   somewhere with normal internet access** — the deployed Vercel app, or a
   future session without this sandbox's allowlist — before fully trusting
-  the write path.
+  the write path. Re-checked in session 3 (P1 was re-attempted per that
+  session's brief): both blockers unchanged — the network policy still
+  rejects the project host, and Vercel's `list_teams` still returns no
+  teams, so there's no visibility into the project's env vars either. See
+  `DECISIONS.md`'s "P1: still not verifiable from this session" entry.
 - **Not set: Vercel environment variables.** `NEXT_PUBLIC_SUPABASE_URL` /
   `NEXT_PUBLIC_SUPABASE_ANON_KEY` are in `.env.example` and were set in
   this session's own local `.env.local` (gitignored) to verify the build,
@@ -114,18 +139,55 @@ README.md replaced entirely; updated again this session for the backend.
   the Vercel dashboard.** This is the most actionable single remaining
   step — everything else in P1/P2 is done and waiting on it.
 
+## Demo telemetry + `/stats` (session 3, P2)
+
+- New `demo_runs` Supabase table — same fields the harness bots already
+  report (seed, crossings, hearts lost, loot picked-up/kept, outcome) plus
+  the full action/input log, so a run is replayable later. No `address`
+  column: DEMO is `stakes:false` and was never wallet-gated, so it's
+  anonymous by design, same RLS shape as `feed_events` (open insert, open
+  select). `demoLog.ts` writes `localStorage` first, then fire-and-forget
+  pushes to Supabase, same pattern as the rest of the backend.
+- New unlisted `/stats` page: one table, real human DEMO runs against all
+  three harness bots on identical metrics (n, median/p95 crossings,
+  success rate, loot pickup rate, loot kept rate). The bots run live in
+  the page's own browser tab — they're pure functions over `HeistRun`, no
+  Node-only dependencies.
+- Two real bugs caught and fixed during Playwright verification of the new
+  page: the human-row fetch was blocking the whole page before any bot
+  trial could run (now two independent effects, the fetch on a 6s
+  timeout); and the bot-trial functions never muted `HeistRun`'s sound,
+  so 500 trials x 3 bots running inside a real browser tab (as opposed to
+  the CLI harness, where `window` is undefined and audio never
+  initialises at all) opened up to 1500 live `AudioContext`s and made the
+  tab hang. Fixed at the source — `bot.ts`/`greedyBot.ts`/
+  `rationalBot.ts` now set `run.soundOn = false` right after constructing
+  their `HeistRun`. Full writeup: `DECISIONS.md`'s "P2: demo telemetry"
+  entry.
+- Side effect of the P0 loot-forfeiture-on-timeout change: added
+  `pickedUpLootEver` to `HeistRun` (telemetry-only, survives forfeiture,
+  unlike `state.taken`/`state.hands`) and fixed two places that had gone
+  stale reading the old fields directly (`greedyBot.ts`'s `lootPickedUp`,
+  `measure.ts`'s `lootKeptRateGreedy`).
+
 ## What's next
 
 1. **Add the two Supabase env vars to the Vercel project** (see above) —
-   the actual unblocking step for everything in P1/P2 to go live.
+   the actual unblocking step for everything in P1/P2 to go live. Still
+   the single most actionable remaining step; re-confirmed blocked from
+   this sandbox in session 3, no change.
 2. **Do one real smoke test against the live Supabase project** once the
    env vars are set (play a run, connect a wallet, confirm rows land in
-   `profiles`/`stats`/`global_drop_counters`) — this sandbox couldn't do it
-   (network policy), but a normal browser hitting the deployed app can.
-3. **P0's finding (`lootKeptRate` 0%) is a design decision waiting on the
-   project owner** — not a bug, not something I tuned around. Full
-   reasoning and the threshold sensitivity table: `CALIBRATION.md`'s "P0"
-   section, `DECISIONS.md`'s P0 entry.
+   `profiles`/`stats`/`global_drop_counters`/`feed_events`/`demo_runs`, the
+   RPC-driven global item counter increments, `/embed` shows real rows,
+   `/stats` shows real human runs, and an address's progress follows it to
+   a second browser) — this sandbox couldn't do it (network policy), but a
+   normal browser hitting the deployed app can.
+3. `LOOT_ESCAPE_AT = 11` is shipped (session 3) — no longer a decision
+   waiting on the project owner. If the target band or the underlying
+   police/clock calibration ever changes, re-run
+   `src/harness/sweepLootEscape.ts` rather than hand-picking a new value;
+   full sweep table in `CALIBRATION.md`.
 4. **Privy** — needs `NEXT_PUBLIC_PRIVY_APP_ID`, then `connectPrivy()` in
    `identity.ts` gets its real implementation.
 5. **On-chain ledger / Solidity port** — still out of scope; the
@@ -142,8 +204,15 @@ README.md replaced entirely; updated again this session for the backend.
 - No test framework installed → used the project's existing `tsx`-script
   harness pattern rather than adding vitest/jest for one test file.
 - No way to write Vercel env vars from this session → documented as the
-  top "what's next" item instead of silently leaving it unmentioned.
+  top "what's next" item instead of silently leaving it unmentioned;
+  re-checked in session 3 (`list_teams` still returns no teams), still
+  blocked.
 - This sandbox's network policy blocks the Supabase project host →
-  verified everything reachable from here (schema, RPC) directly via the
-  Supabase MCP tools instead, and documented the one thing that still
-  needs a real-network smoke test.
+  verified everything reachable from here (schema, RPC, migrations)
+  directly via the Supabase MCP tools instead, and documented the one
+  thing that still needs a real-network smoke test.
+- Session 3: bot-trial functions run live inside `/stats`'s browser tab
+  opened real `AudioContext`s (invisible in the Node CLI harness, where
+  `window` is undefined) and made the page hang → fixed by muting sound in
+  the three harness bots (`run.soundOn = false`), not by working around it
+  with more chunking alone.
