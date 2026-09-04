@@ -4,7 +4,7 @@
 // src/engine/ (that's the separate Solidity-portable track from the code
 // brief); this is what actually drives the Play/Demo canvas, because that
 // prototype is the approved reference and must not be redesigned.
-import { COPS, COP_W, ENV, HANDS as HAND_STATE, HELD, ICONS, PAL, POSES, VEHICLES } from '@/design/sprite-data'
+import { COPS, COP_W, ENV, HANDS as HAND_STATE, HELD, ICONS, OUTRO, PAL, POSES, VEHICLES } from '@/design/sprite-data'
 import { rollPaintingDrop } from './paintingStore'
 import { deriveStream, nextChance, nextFloat, nextInt, nextRange, shuffle, type RngState } from './rng'
 
@@ -82,6 +82,10 @@ export const WINDOW_S = 10
 export const LOOT_FROM = 6
 export const LIVES_MAX = 3
 export const DURATION_S = 60
+// How long the winning outro (bike or helicopter, see draw()) plays before
+// HeistGame.tsx shows the summary screen over it — ticks, not seconds, so
+// it stays exact against TICK_MS like everything else timed in the engine.
+export const OUTRO_TICKS = Math.round(2600 / TICK_MS)
 // Sprint: hold to run faster while the gauge (state.staminaPct, 1 = full)
 // has anything left. SPRINT_DRAIN_S is how many seconds of continuous
 // sprint it takes to empty it; hitting empty forces `winded`, which stays
@@ -152,6 +156,13 @@ export type RunState = {
   // hits 0 and only clears once staminaPct is back to 1 — see SPRINT_*.
   staminaPct: number
   winded: boolean
+  // True only when mode reaches 'paid' by holding to the clock's natural
+  // end (see clock()) rather than by pressing Escape during the window —
+  // the two winning outro animations (bike vs. helicopter) key off this,
+  // not off what's in hand, since a committed run that never picked up
+  // anything still deserves the "held out" ending, not the "cut and ran"
+  // one. Meaningless while mode !== 'paid'.
+  heldToEnd: boolean
   outcome: 'collared' | 'flattened' | 'timeout'
   heldItem: ItemKey | null
   // Rolled the moment the wallet is picked up, revealed only at the end of
@@ -186,7 +197,7 @@ export type Result = {
 }
 
 export class HeistRun {
-  state: RunState = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, windowLeft: 0, staminaPct: 1, winded: false, outcome: 'collared', heldItem: null, walletOutcome: null, walletAmount: 0 }
+  state: RunState = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: DURATION_S, windowLeft: 0, staminaPct: 1, winded: false, heldToEnd: false, outcome: 'collared', heldItem: null, walletOutcome: null, walletAmount: 0 }
   // The seed this run's world and every roll in it derive from — see
   // DECISIONS.md #1. Passed explicitly for a replay; otherwise picked here
   // so ordinary play still gets a fresh, recorded, verifiable world.
@@ -257,6 +268,9 @@ export class HeistRun {
   reinDone = false
   reinBanner = 0
   lostAt = -1
+  // Tick mode became 'paid', for the outro animation's own clock (see
+  // draw()/OUTRO_TICKS). null until then, reset on every newRun().
+  paidAtTick: number | null = null
   alertMsg: string | null = null
   alertLevel = -1
   critical = false
@@ -442,10 +456,11 @@ export class HeistRun {
     this.crossingSpeedMult = null
     this.ms = 0
     this.lostAt = -1
+    this.paidAtTick = null
     this.tick = 0
     this.inputLog = []
     this.actionLog = []
-    this.state = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, windowLeft: 0, staminaPct: 1, winded: false, outcome: 'collared', heldItem: null, walletOutcome: null, walletAmount: 0 }
+    this.state = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: DURATION_S, windowLeft: 0, staminaPct: 1, winded: false, heldToEnd: false, outcome: 'collared', heldItem: null, walletOutcome: null, walletAmount: 0 }
   }
 
   stopX(index: number): number { return ((index * 67) % (W - 80)) + 8 }
@@ -693,7 +708,8 @@ export class HeistRun {
     if (this.state.mode === 'armed') {
       this.actionLog.push([this.tick, 'Escape'])
       this.usedItemsThisRun = []
-      this.state = { ...this.state, mode: 'paid', windowLeft: 0, taken: {}, hands: 'ticket', heldItem: null, walletOutcome: null, walletAmount: 0 }
+      this.paidAtTick = this.tick
+      this.state = { ...this.state, mode: 'paid', windowLeft: 0, heldToEnd: false, taken: {}, hands: 'ticket', heldItem: null, walletOutcome: null, walletAmount: 0 }
     }
   }
 
@@ -889,7 +905,8 @@ export class HeistRun {
     // of ESCAPE_AT (mode never left 'run') it's a loss, same shape as
     // being caught.
     if (this.state.mode === 'committed' || this.state.mode === 'armed') {
-      this.state = { ...this.state, timeLeft: 0, mode: 'paid' }
+      this.paidAtTick = this.tick
+      this.state = { ...this.state, timeLeft: 0, mode: 'paid', heldToEnd: true }
     } else {
       this.loserTune()
       this.state = { ...this.state, timeLeft: 0, mode: 'lost', outcome: 'timeout' }
@@ -1026,6 +1043,34 @@ export class HeistRun {
     ctx.fillStyle = PAL.K; ctx.fillRect(-40, y, W + 80, 1)
   }
 
+  /** The two winning outros, keyed off `heldToEnd` (see RunState) rather
+   *  than what's in hand — a bike for a ticket-only window escape, a
+   *  helicopter for holding out after committing. `elapsed` is ticks since
+   *  `mode` became 'paid'; `progress` is that against OUTRO_TICKS, 0..1. */
+  private drawOutro(ctx: CanvasRenderingContext2D, feet: number, elapsed: number): void {
+    const progress = Math.min(1, elapsed / OUTRO_TICKS)
+    if (this.state.heldToEnd) {
+      const heli = OUTRO.helicopter
+      const cruiseY = feet - 24 - heli.h - 4
+      let y: number
+      if (progress < 0.4) y = -heli.h + (progress / 0.4) * (cruiseY + heli.h)
+      else if (progress < 0.6) y = cruiseY
+      else y = cruiseY - ((progress - 0.6) / 0.4) * (cruiseY + heli.h + 30)
+      if (progress < 0.55) {
+        this.shadow(ctx, this.tx + 4, 14, feet, 'dither50')
+        this.cell(ctx, this.thiefRows(), this.tx, feet - 24)
+      }
+      this.cell(ctx, heli.rows, this.tx - 16, y)
+    } else {
+      const bike = OUTRO.bike
+      const x = this.tx - 5 + Math.round(progress * progress * (W + 60))
+      const by = feet - bike.h + 2
+      this.shadow(ctx, x + 4, bike.w - 8, feet, 'dither50')
+      this.cell(ctx, bike.rows, x, by)
+      this.cell(ctx, this.thiefRows('tuck'), x + 4, by - 14)
+    }
+  }
+
   draw(ctx: CanvasRenderingContext2D): void {
     ctx.fillStyle = PAL.T; ctx.fillRect(-40, 0, W + 80, H)
 
@@ -1110,9 +1155,15 @@ export class HeistRun {
     }
 
     const feet = screenTop(this.wy)
-    this.shadow(ctx, this.tx + 4, 14, feet, 'dither50')
-    const flash = ((this.state.mode === 'hit' || this.state.blink > 0) && this.tick % 2 === 0) ? 'flash' : undefined
-    this.cell(ctx, this.thiefRows(), this.tx, feet - 24, { mode: flash })
+    if (this.state.mode === 'paid' && this.paidAtTick !== null) {
+      const elapsed = this.tick - this.paidAtTick
+      if (elapsed < OUTRO_TICKS) this.drawOutro(ctx, feet, elapsed)
+      // else: they're already gone — nothing more to draw here.
+    } else {
+      this.shadow(ctx, this.tx + 4, 14, feet, 'dither50')
+      const flash = ((this.state.mode === 'hit' || this.state.blink > 0) && this.tick % 2 === 0) ? 'flash' : undefined
+      this.cell(ctx, this.thiefRows(), this.tx, feet - 24, { mode: flash })
+    }
 
     if (this.critical && this.live()) {
       ctx.fillStyle = PAL.R

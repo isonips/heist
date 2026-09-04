@@ -273,6 +273,66 @@ export const VEHICLES = {
   police_b: makeCar({ body: 'P', shade: 'C', glass: 'S', bar: 'R' })
 };
 
+/* ------------------------------------------------------------- the getaway */
+/** A straight run between two points, thickened by `w` pixels — the frame
+ *  tubes a bike needs and box()/rbox() can't give (axis-aligned only). */
+function line(g: Grid, x0: number, y0: number, x1: number, y1: number, col: string, w = 1) {
+  const dx = x1 - x0, dy = y1 - y0
+  const steps = Math.max(Math.abs(dx), Math.abs(dy), 1)
+  for (let i = 0; i <= steps; i++) {
+    const x = Math.round(x0 + (dx * i) / steps), y = Math.round(y0 + (dy * i) / steps)
+    for (let ty = 0; ty < w; ty++) for (let tx = 0; tx < w; tx++) {
+      const gy = y + ty, gx = x + tx
+      if (gy >= 0 && gy < g.length && gx >= 0 && gx < g[0].length) g[gy][gx] = col
+    }
+  }
+}
+
+/** Two wheels and a frame, the way a side-view bike reads at this scale:
+ *  triangle of tubes between the axles and a seat post, nothing anatomical
+ *  — same "silhouette over detail" rule the rest of this file follows. Sat
+ *  under the thief's own POSES for the ticket-only getaway (HeistRun draws
+ *  the two together), so it only needs to carry the bike, not a rider. */
+function makeBike() {
+  const w = 30, h = 22
+  const g = grid(w, h)
+  const rearX = 6, frontX = 24, axleY = 15
+  wheel(g, rearX - 5, axleY - 3)
+  wheel(g, frontX - 5, axleY - 3)
+  const bbX = 14, bbY = axleY - 1, seatX = 10, seatY = 3, barX = 21, barY = 5
+  line(g, rearX, axleY, bbX, bbY, 'K', 2)
+  line(g, bbX, bbY, frontX, axleY, 'K', 2)
+  line(g, bbX, bbY, seatX, seatY, 'K', 2)
+  line(g, seatX, seatY, barX, barY, 'S', 2)
+  line(g, barX, barY, frontX, axleY, 'K', 2)
+  box(g, seatX - 2, seatY - 1, 5, 2, 'K', null)
+  box(g, barX - 1, barY - 2, 3, 2, 'K', null)
+  return { w, h, rows: rowsOf(g) }
+}
+
+/** Side view, blades a flat blur line rather than drawn spinning — legible
+ *  at 1x, and it reads as motion the way the truck's ribbed panels read as
+ *  metal rather than as a decoration. */
+function makeHelicopter() {
+  const w = 52, h = 26
+  const g = grid(w, h)
+  rbox(g, 10, 9, 26, 12, 'P', 'K', 3)
+  rbox(g, 16, 12, 12, 6, 'S', 'K', 1)
+  box(g, 34, 13, 16, 3, 'C', 'K')
+  rbox(g, 48, 8, 4, 10, 'K', null, 0)
+  box(g, 12, 21, 22, 1, 'K', null)
+  box(g, 14, 22, 2, 2, 'K', null)
+  box(g, 30, 22, 2, 2, 'K', null)
+  box(g, 22, 5, 2, 4, 'K', null)
+  box(g, 1, 4, 50, 1, 'C', null)
+  return { w, h, rows: rowsOf(g) }
+}
+
+export const OUTRO = {
+  bike:       makeBike(),
+  helicopter: makeHelicopter()
+};
+
 /* ------------------------------------------------------------- environment */
 /** Verge furniture and the bus stop where the loot appears. Authored at their
  *  own sizes; rows are right-padded when the sheet is packed. */

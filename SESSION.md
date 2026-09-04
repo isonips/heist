@@ -21,9 +21,12 @@ traffic density) could reach them — followed by a sprint/stamina mechanic
 after two more user-caught fixes (police and traffic have to slow down in
 lockstep with a winded thief, or slowing the thief just closes the arrest
 gap faster; a crossing has to be entered at a locked pace so winded can
-never strike mid-road) got it within a few points of all three targets.
-Details and reasoning for every non-obvious call are in `DECISIONS.md`;
-tuning history and every measured number is in `CALIBRATION.md`.
+never strike mid-road) got it within a few points of all three targets —
+accepted as final, then closed out with the two outro animations the
+balance work had been blocking (a stolen bike for a window escape, a
+helicopter for holding to the end). Details and reasoning for every
+non-obvious call are in `DECISIONS.md`; tuning history and every measured
+number is in `CALIBRATION.md`.
 
 Every commit across all four sessions builds, typechecks, and lints clean
 (`npx tsc --noEmit`, `npx eslint src --max-warnings=0`, `npm run build`) —
@@ -252,11 +255,18 @@ README.md replaced entirely; updated again this session for the backend.
    combinations found. Accepted per instruction ("on laisse comme ça")
    rather than continuing to search — see `CALIBRATION.md`'s "P0
    follow-up 4" if the target band ever needs revisiting.
-4. **Visuals for the two escape outcomes — agreed, not yet started.** An
-   early ticket-only escape steals a bike and pulls away; holding to the
-   end after committing gets picked up by helicopter. Deliberately
-   sequenced after the balance work above, per instruction ("on ajustera
-   après la vitesse... une fois ok on passe aux visuels").
+4. **Visuals for the two escape outcomes — done.** A ticket-only window
+   escape steals a bike and rides off; holding to the end after committing
+   gets picked up by a helicopter. New `RunState.heldToEnd` distinguishes
+   the two (by how the run ended, not what it's carrying); new
+   `OUTRO.bike`/`OUTRO.helicopter` sprites built from the same box/rbox/
+   wheel primitives the vehicles already use, plus a new `line()` helper
+   for the bike's diagonal frame tubes; `draw()`'s `drawOutro()` plays for
+   `OUTRO_TICKS` (~2.6s) before `HeistGame.tsx` shows the summary screen.
+   Verified live (Playwright, timers patched locally to trigger both in
+   seconds, screenshotted mid-animation) — see `DECISIONS.md`'s "Outro
+   animations" entry, which also covers a real bug found along the way:
+   `timeLeft` was seeded from a hard-coded `60`, not `DURATION_S`.
 5. **Privy** — needs `NEXT_PUBLIC_PRIVY_APP_ID`, then `connectPrivy()` in
    `identity.ts` gets its real implementation.
 6. **On-chain ledger / Solidity port** — still out of scope; the

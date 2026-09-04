@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { theme } from '@/design/theme'
-import { ESCAPE_AT, H, HeistRun, SCALE, TICK_MS, W, type ItemKey, type Mode } from '@/game/heistRun'
+import { ESCAPE_AT, H, HeistRun, OUTRO_TICKS, SCALE, TICK_MS, W, type ItemKey, type Mode } from '@/game/heistRun'
 import { buildRun } from '@/game/buildRun'
 import { postFeedEvent } from '@/game/feedBus'
 import { exportDemoLogAsFile, getDemoLog, recordDemoRun } from '@/game/demoLog'
@@ -190,6 +190,11 @@ export default function HeistGame() {
   }, [mode, demo, ready])
 
   const ended = hud.mode === 'paid' || hud.mode === 'lost'
+  // The bike/helicopter outro plays on the canvas itself for OUTRO_TICKS
+  // right after a win — the summary screen waits behind it rather than
+  // covering it immediately. Only applies to 'paid': a loss has its own
+  // instant red-flash treatment, unchanged.
+  const outroActive = hud.mode === 'paid' && hud.paidAtTick !== null && hud.tick - hud.paidAtTick < OUTRO_TICKS
   const windowOpen = hud.mode === 'armed'
   const committed = hud.mode === 'committed'
   const carrying = hud.hands !== 'ticket' || hud.heldItem !== null
@@ -358,7 +363,7 @@ export default function HeistGame() {
             AH SHIT, HERE WE GO AGAIN
           </div>
         )}
-        {ended && (
+        {ended && !outroActive && (
           <div
             style={{
               position: 'absolute',
@@ -468,6 +473,8 @@ function snapshot(run: HeistRun) {
     staminaPct: run.state.staminaPct,
     winded: run.state.winded,
     mode: run.state.mode,
+    heldToEnd: run.state.heldToEnd,
+    paidAtTick: run.paidAtTick,
     outcome: run.state.outcome,
     hands: run.state.hands,
     alertMsg: run.alertMsg,

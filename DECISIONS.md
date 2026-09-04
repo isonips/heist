@@ -828,3 +828,69 @@ the codebase at a neutral default (`SCALE = 0`) — same structural ceiling
 as every other pressure-only lever, not deleted since the plumbing itself
 is sound and sweepable if ever needed again.
 
+## Outro animations: bike vs. helicopter, once the balance work landed
+
+Per instruction, sequenced strictly after the sprint/window calibration
+above ("on ajustera après la vitesse... une fois ok on passe aux
+visuels") — this entry covers the two winning outros: a stolen bike for a
+ticket-only window escape, a helicopter pickup for holding to the end
+after committing.
+
+**What distinguishes the two isn't what's in hand.** A committed run that
+never picked up any loot still deserves the "held out" ending, not the
+"cut and ran" one — the two outros are about *how* the run ended, not
+what it's carrying. Added `heldToEnd: boolean` to `RunState`, set only in
+`clock()`'s natural-end-of-clock branch (never in `escapeNow()`), and a
+`paidAtTick: number | null` field marking the tick `mode` became `'paid'`
+— both consumed by `draw()`'s new `drawOutro()` method, gated by a new
+`OUTRO_TICKS` constant (~2.6s) that also gets exported so `HeistGame.tsx`
+knows how long to hold the summary screen back.
+
+**Sprites are generated, not hand-drawn row-by-row.** `sprite-data.ts`
+already has box/rbox/wheel primitives the vehicle sprites are built from
+(`makeCar`/`makeTruck`); added a `line()` helper (box/rbox are axis-aligned
+only, and a bike frame needs diagonals) and built `makeBike()`/
+`makeHelicopter()` the same way, exported as `OUTRO.bike`/
+`OUTRO.helicopter`. Chose this over hand-authoring pixel rows blind — the
+existing rows in this file were clearly iterated against a real renderer,
+which wasn't practical to do by inspection alone, so building from the
+same parametric primitives already in file (and then actually rendering
+and screenshotting the result — see below) was the safer path to
+something that reads correctly at this scale on the first attempt.
+
+**The outro replaces the ordinary thief-drawing branch in `draw()`,
+not a separate overlay layer** — while `mode === 'paid'` and
+`tick - paidAtTick < OUTRO_TICKS`, `drawOutro()` runs instead of the
+normal shadow+`cell()` thief draw; once the outro's ticks are spent,
+nothing is drawn there at all (the getaway has left, plausible as a final
+frame on its own). `HeistGame.tsx`'s summary overlay is held back by the
+same window (`outroActive`) so the canvas animation is visible before the
+dark "THE CRIME PAID" screen covers it — `ended` itself (which still gates
+input, e.g. `canEscape`) is untouched, only the overlay's own render is
+delayed.
+
+**Verified live, not just read** — a real bug would've been invisible from
+code review alone here, since pixel-row math is easy to get subtly wrong
+in a way that still typechecks. Patched `ESCAPE_AT`/`WINDOW_S`/
+`DURATION_S`/`POLICE_PX`/`POLICE_HEAD_START_S` locally to trigger both
+outros in seconds instead of a full run, played both through Playwright,
+and screenshotted several frames of each — bike riding off to the right
+with the world frozen behind it, helicopter descending, thief disappearing
+at pickup, helicopter climbing back out the top of frame. Both read
+correctly; no code changes were needed after seeing them. All test-only
+constant patches were reverted before committing — diffed against the
+prior commit to confirm every constant landed back on its real, shipped
+value.
+
+**Found and fixed along the way, not test-script-specific:** `RunState`'s
+`timeLeft` was initialized from a hard-coded literal `60` in both places
+`state` gets constructed, not from `DURATION_S` — meaning `DURATION_S`
+never actually controlled the run length despite being the documented,
+exported source of truth for it (`RulesTab.tsx` already displays it to
+players as if it did). Changed both literals to `timeLeft: DURATION_S`.
+No behavioral change at the current value (`DURATION_S` already equals
+60), confirmed by re-running the calibration sweep before and after and
+seeing identical numbers — but it was a live bug: anyone changing
+`DURATION_S` alone, expecting it to change the game, would have silently
+gotten nothing.
+
