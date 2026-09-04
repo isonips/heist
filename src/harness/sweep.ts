@@ -5,7 +5,6 @@ export type SweepSummary = {
   successRate: number
   medianCrossings: number
   p95Crossings: number
-  relativeGap: number
   medianHeartsLostOnWin: number
   reinforcementTriggerRate: number
   medianLeadAtSeventhS: number | null
@@ -44,7 +43,6 @@ export function runSweep(trials: number): { summary: SweepSummary; rows: BotTria
     successRate: wins.length / trials,
     medianCrossings: med,
     p95Crossings: p95v,
-    relativeGap: med > 0 ? (p95v - med) / med : 0,
     medianHeartsLostOnWin: median(heartsLostOnWin),
     reinforcementTriggerRate: rows.filter((r) => r.reinforcementFired).length / trials,
     medianLeadAtSeventhS: leads.length ? median(leads) : null,

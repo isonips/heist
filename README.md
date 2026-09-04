@@ -56,7 +56,7 @@ measure difficulty rather than guess at it:
 
 ```bash
 npx tsx src/harness/cli.ts 2000          # cautious-bot sweep: success rate, median crossings, reinforcement rate
-npx tsx src/harness/measure.ts 500       # relativeGap, impossibleShare, lootPickupRate
+npx tsx src/harness/measure.ts 500       # impossibleShare, lootPickupRate/lootKeptRate, rational-bot loot viability (P0)
 npm run test:determinism                 # 200 seeds, played then replayed, fails on any divergence
 ```
 

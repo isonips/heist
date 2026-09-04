@@ -228,3 +228,79 @@ else's page as a passive activity ticker, not a second copy of the app's
 own UI; interactivity (sending a message, collapsing) belongs to the real
 `FeedWindow`, not an embed.
 
+---
+
+# Follow-up session: two corrections confirmed, one new finding (P0)
+
+The project owner confirmed both open items from #2 above were real problems
+with the *brief's targets*, not gaps in the measurement, and told me to
+apply the same judgment going forward without stopping to check.
+
+## relativeGap — removed
+
+Confirmed: for a policy riding out a roughly constant per-tick hazard, the
+95th-percentile-to-median ratio is `ln(0.05)/ln(0.50) ≈ 4.32` as a matter of
+the math, not the tuning — no combination of `POLICE_PX`/`REIN_LEAD_S`/
+anything else was ever going to land this near 0.06. The 0.06 target came
+from the abandoned grid engine's binary reachable/not-reachable model, which
+this game's continuous survival process doesn't resemble. Removed
+`relativeGap` and `relativeGapFixedSkill` from `src/harness/measure.ts`
+entirely, and the vestigial `relativeGap` field from `src/harness/sweep.ts`'s
+`SweepSummary` too (same invalid-metric family, even though it was trivially
+0 there for an unrelated reason — the cautious bot's crossings distribution
+is a point mass at 10 by construction). `p95Crossings` stays in
+`SweepSummary` as a plain stat; only the ratio is gone. Reasoning recorded
+in `CALIBRATION.md`'s "relativeGap: dropped" section, not just here, since
+that's where someone re-running the harness would look first.
+
+## impossibleShare — confirmed correct at 4.2%, `buildWorld()` untouched
+
+Confirmed: the ceiling against scripted play is already supplied by police
+pressure (`successRate` 60-61%, inside the target band the `REIN_LEAD_S`
+retune was aimed at), so pushing a third of maps into "unwinnable by
+anyone" would be degrading the game to satisfy a target whose actual goal
+(a real, present ceiling on scripted/bot play) is already met a different
+way. No code changed for this item this pass — `CALIBRATION.md` gained a
+short section recording that the number was re-checked and the decision to
+leave `buildWorld()` alone stands, so a future reader doesn't wonder whether
+4.2% was ever looked at again.
+
+## P0: rational bot — loot is not currently reachable by rational play
+
+New work, not a correction. `src/harness/rationalBot.ts`: same movement/
+loot-seeking policy as the greedy bot, but once armed it re-evaluates every
+tick whether to escape (lock the ticket, forfeit anything held) or hold
+(risk the ticket and the loot for a chance to bank both) — hold only while
+there's something worth holding *and* the lead is still above `SAFE_LEAD_S`.
+
+**Threshold choice: `SAFE_LEAD_S = 13`, the exact far/mid boundary
+`heistRun.ts`'s own `alerts()` already uses**, not a new invented number —
+a rational player has no better signal than what the shipped game actually
+shows them (the alert-level banner), so the bot uses the same one. This
+isn't a fully Bellman-optimal exit policy (that needs its own simulation
+study to estimate P(survive | lead, time left) properly, disproportionate
+to what P0 asked for); it's a defensible, principled threshold, and its
+defensibility matters here because the finding it produced is stark.
+
+**Result: `lootKeptRate` is 0% at 1000 trials, and `reachedTenthRate`
+exactly equals `ticketRate`** — meaning in a thousand trials, the "hold"
+branch of the policy never fired even once; every run that reaches crossing
+10 escapes with the ticket on that exact same decision point. Before
+trusting a single threshold's result, swept `SAFE_LEAD_S` across the game's
+entire alert range (3.4/6.5/13, critical through far) to check this wasn't
+an artifact of picking 13 specifically — `lootKeptRate` stayed at 0.0-0.7%
+across all three. The reason is structural: median lead is already down to
+~7s by the time crossing 10 is reached (consistent with
+`medianLeadAtSeventhS` measured earlier in `CALIBRATION.md`), which sits
+below every threshold tested — there is no point during a run where
+"armed" and "comfortably safe by the game's own definition" coincide, so a
+rational reading of the game's own signals says escape immediately, always.
+
+**I made no changes in response to this finding, per the explicit
+instruction not to.** It's reported as a design finding, not a bug: the
+wallet/painting/mystery-item economy, as currently paced, is only ever
+banked by a player choosing to override their own better judgment and gamble
+past what the game itself is telling them is safe — never by playing
+rationally. What (if anything) changes about pacing, the escape mechanic, or
+the loot economy's shape as a result is the project owner's call.
+

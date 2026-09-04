@@ -1,12 +1,12 @@
 // The cautious bot in bot.ts always escapes the instant it reaches
 // ESCAPE_AT (the rational move for a bot that doesn't value loot) — which
-// means its own crossings distribution is capped at 10 by construction and
-// can't say anything about how far a run *could* go. This bot never
-// escapes: it detours for loot/items when they're on a stop it's standing
-// at, otherwise plays the same safe-crossing policy, and rides every run to
-// its natural end (caught, out of lives, or the clock). Its ceiling against
-// the cautious bot's median is what makes relativeGap mean something; it
-// also drives lootPickupRate, since the cautious bot never goes near loot.
+// means it never goes near loot and can't say anything about whether loot
+// is reachable at all. This bot never escapes: it detours for loot/items
+// when they're on a stop it's standing at, otherwise plays the same
+// safe-crossing policy, and rides every run to its natural end (caught, out
+// of lives, or the clock). That's what makes it useful for lootPickupRate.
+// (It was also used for relativeGap, since removed as a metric — see
+// CALIBRATION.md's "relativeGap: dropped" section.)
 import { HeistRun, resultOf, type Dir, type Result } from '@/game/heistRun'
 import { isSafe } from './bot'
 
@@ -14,7 +14,10 @@ const MAX_TICKS = Math.ceil(65000 / 110)
 const W_BOUND_MIN = 2
 const W_BOUND_MAX = 226 - 24
 
-function decideGreedyMove(run: HeistRun): Dir | null {
+// Exported so rationalBot.ts can reuse the exact same "detour for loot,
+// otherwise cross when it's safe" movement policy rather than a second
+// copy of it — the two bots only need to differ on the escape decision.
+export function decideGreedyMove(run: HeistRun): Dir | null {
   if (run.hopTo !== null) return null
   const band = run.bands[run.bi]
   if (band.k === 'stop') {

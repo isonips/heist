@@ -86,68 +86,93 @@ Notes on reading the harness output in general:
   4-tick lookahead, not an optimal player, and it never hesitates the way a
   human does — treat its numbers as a ceiling estimate, not a finished RTP.
 
-## relativeGap, impossibleShare, lootPickupRate (`npx tsx src/harness/measure.ts <trials>`)
+## relativeGap: dropped from the harness
 
-The old note above (still true of `src/harness/cli.ts`'s bot alone) was that
-`relativeGap` couldn't be measured because the cautious bot always escapes
-the instant it reaches crossing 10 — median = p95 = 10 by construction. Fixed
-by adding a second bot, `src/harness/greedyBot.ts`: it uses the same
-safe-crossing policy but never escapes, detours sideways for loot/items when
-one is sitting at the bus stop it's on, and rides every run to its natural
-end (caught, out of lives, or the 60s clock). 500 trials, same seed set for
-both bots:
+Confirmed structurally invalid for this game, not just hard to hit. For a
+policy that keeps playing against a roughly constant per-tick hazard of
+being caught, the ratio of the 95th percentile to the median crossings is a
+closed-form function of the survival curve alone: p95/median =
+ln(0.05)/ln(0.50) ≈ 4.32, independent of how any parameter is tuned — the
+95th-percentile run is "survived 20x as many independent hazard rolls as
+the median run," and that ratio doesn't move just because the per-roll
+hazard does. The 0.06 target came from a binary reachability model (the
+abandoned grid engine's own calibration — a map is either perfect-playable
+or it isn't, with no continuous survival process), which doesn't describe
+the game that got built. `relativeGap`/`relativeGapFixedSkill` are removed
+from `src/harness/measure.ts`; the greedy bot (`greedyBot.ts`) stays, since
+it's still the only thing that measures `lootPickupRate`.
 
-| metric | value | target | read |
-|---|---|---|---|
-| `relativeGap` (greedy p95 vs cautious median) | **1.40** | < 0.06 | see below |
-| `relativeGapFixedSkill` (greedy p95 vs its own median) | **1.18** | — | see below |
-| `impossibleShare` (solver, 500 seeds) | **4.2%** | 30-35% | see below |
-| `lootPickupRate` (of runs where loot spawned) | **68.8%** | — | bot actually detours for it |
-| `lootKeptRate` (picked up *and* survived to bank it) | **3.9%** | — | greedy bot dies with loot in hand far more than it banks it |
+## impossibleShare: 4.2% confirmed correct, not chased
 
-**`relativeGap` is not close to 0.06, and I don't think it can be with this
-kind of bot without changing what the metric means.** The literal ask —
-greedy ceiling vs cautious median — is comparing two different policies, one
-of which is capped at exactly 10 by definition; any greedy ceiling above 10
-(and it needs to be, that's the entire point of "push past 10 for loot")
-produces a large ratio against a median stuck at 10. So I also computed the
-brief's original definition (see the git history of this file): p95 vs
-median of *one* policy's own distribution across seeds — `relativeGapFixedSkill`,
-still 1.18. That number stays large for a structural reason, not a tuning
-one: a bot that keeps playing against a roughly constant per-crossing risk
-of being caught produces a heavy right tail almost no matter how that risk
-is tuned (a small number of lucky seeds survive to crossing 40-49 while most
-don't clear crossing 15) — the median and the 95th percentile of "how long
-until something with constant hazard dies" are never going to sit close
-together. Getting this under 0.06 would mean either the risk stops being
-roughly constant per crossing (a different pacing model, not a parameter
-nudge) or the metric gets redefined to only compare *successful* runs. I
-measured and reported this rather than force-fitting `POLICE_PX` to hit a
-number that may not be reachable by this route — flagged in `DECISIONS.md`.
+`buildWorld()` is untouched. The ceiling against scripted play is already
+supplied by police pressure, not by making maps unwinnable: `successRate`
+sits at 60-61% (`REIN_LEAD_S` retune, above), inside the target band that
+was already the point of that lever. Pushing `impossibleShare` to 30-35%
+would mean redesigning lane-count generation so roughly a third of maps are
+lost *no matter how well anyone plays them* — a strictly worse player
+experience in service of a target that's already being met a different way.
+Confirmed via `src/harness/solver.ts` (perfect play, lives and the police
+catch both switched off via `HeistRun`'s `invincible` flag) — no code
+changed here this pass, this section exists to record that the number was
+checked again and the decision to leave it stands.
 
-**`impossibleShare` is 4.2%, target is 30-35% — also not chased.** The
-solver (`src/harness/solver.ts`) reuses the real `buildWorld()`/traffic/
-stepping logic with lives and the police catch both switched off
-(`HeistRun`'s `invincible` flag — see `DECISIONS.md` #2) and the same
-forward/dodge policy as the cautious bot, then checks whether crossing 10 is
-reachable inside the 60s clock at all. Only ~1 in 24 generated maps can't be
-perfect-played to the goal. Closing that gap to 30-35% needs `buildWorld()`
-itself to occasionally generate much harder traffic than it does today (it
-always rolls 1-4 lanes per section, uniformly) — a map-generation difficulty
-change, not a bot or police change, and a much bigger one: it would mean
-roughly a third of runs are lost *no matter how well anyone plays them*.
-That's a real design call about what "hard" should mean here (skill-and-luck
-vs. sometimes-just-unwinnable), not something to force through unilaterally
-off one inherited target number — left for explicit direction, see
-`DECISIONS.md`.
+## P0: is the loot actually playable? (`src/harness/rationalBot.ts`)
 
-**`lootPickupRate` (68.8%) is the number that came out clean.** Of the runs
-where a wallet or painting actually spawned, the greedy bot reached and
-picked it up more than two-thirds of the time — the detour logic works. What
-it rarely does is survive with it: `lootKeptRate` is under 4%, because this
-bot never plays it safe once it has loot, it just keeps crossing. That gap
-(pick up 69%, keep 4%) is itself useful signal for anyone tuning "is loot
-worth the risk" later, even though nothing here changed because of it.
+The real question `lootPickupRate` (68.8%) vs `lootKeptRate` (3.9%, greedy
+bot) raised: those numbers come from a bot that never escapes voluntarily,
+so they can't say whether a bot that actually plays *to keep the loot* — by
+choosing to escape or hold at the right moment, not by refusing to escape
+at all — does any better. `rationalBot.ts` is that bot: same safe-crossing
+and loot-seeking policy as the greedy bot, but once armed (`crossed >= 10`)
+it re-evaluates every tick — hold while there's something worth holding and
+the lead is still comfortably safe (`secsToArrest() > 13`, the same
+far/mid boundary the shipped game's own `alerts()` already uses — not a new
+number), escape the instant either condition fails.
+
+1000 trials:
+
+| metric | value |
+|---|---|
+| `ticketRate` (earned the ticket at all) | **59.2%** |
+| `lootKeptRate` (of runs where loot spawned) | **0%** |
+| `reachedTenthRate` | **59.2%** (identical to ticketRate — see below) |
+| median seconds to reach the 10th crossing | **22.4s** |
+| median seconds left on the clock at that moment | **38s** |
+
+**`lootKeptRate` is 0%, and it's not an artifact of the 13s threshold.**
+Swept `SAFE_LEAD_S` across the game's own full alert range — 3.4s
+(`critical`, the most risk-tolerant reading of "rational") through 6.5s
+(`near`) to 13s (`far`) — and `lootKeptRate` stayed at 0.0-0.7% the entire
+way; `ticketRate` moved (53-59%) but the loot number didn't move in any
+meaningful sense. The reason is structural, not a threshold-tuning problem:
+median lead is already down to ~7s by the time the 10th crossing is even
+reached (consistent with `medianLeadAtSeventhS` ≈ 7.2s measured earlier in
+this file), which is already below every one of those thresholds — so a
+rational bot, using the game's own signal for "safe," finds the position
+already too risky to hold *at the exact moment it becomes able to hold
+anything at all*. There isn't a window where "armed" and "comfortably
+safe" coincide. `reachedTenthRate == ticketRate` confirms this from the
+other direction: every single trial that reaches crossing 10 escapes with
+the ticket on that same decision point, every time — the "hold" branch of
+the policy never actually fires in a thousand trials.
+
+**This confirms the hypothesis directly: the central decision always
+resolves to "escape," items and loot don't get a chance to accumulate, and
+nothing here was changed to make this number look better.** `SAFE_LEAD_S`
+is left at 13 (the most conservative, most defensibly-"rational" of the
+three tested) — see `DECISIONS.md`'s P0 entry for the full reasoning and
+the sensitivity table. This is a game-design finding (the wallet/painting/
+mystery-item economy is not currently reachable by rational play, only by a
+player who deliberately gambles against their own better judgment), not a
+calibration one, and it's the project owner's call what to do about it.
+
+**`lootPickupRate` (68.8%, greedy bot) is still the number that came out
+clean, unrelated to the finding above.** Of the runs where a wallet or
+painting actually spawned, the greedy (never-escapes) bot reached and
+picked it up more than two-thirds of the time — the detour-and-pickup logic
+itself works fine. The problem P0 identifies is entirely about the exit
+decision once something valuable is in hand, not about whether the loot can
+be physically reached.
 
 ## Known-fixed issues
 

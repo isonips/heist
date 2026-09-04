@@ -1,9 +1,12 @@
-// The three numbers priority 2 asked for, all in one run so they're
-// comparable against the same seed set: relativeGap, impossibleShare,
-// lootPickupRate. Usage: npx tsx src/harness/measure.ts [trials]
+// impossibleShare, lootPickupRate/lootKeptRate (greedy bot, for context),
+// and the P0 loot-viability numbers from the rational bot. relativeGap was
+// removed after being confirmed structurally invalid for this game — see
+// CALIBRATION.md's "relativeGap: dropped" section and DECISIONS.md #2.
+// Usage: npx tsx src/harness/measure.ts [trials]
 import { writeFileSync } from 'node:fs'
-import { runBotTrial } from './bot'
+import { TICK_MS } from '@/game/heistRun'
 import { runGreedyBotTrial } from './greedyBot'
+import { runRationalBotTrial } from './rationalBot'
 import { impossibleShare } from './solver'
 
 const trials = Number(process.argv[2] ?? 500)
@@ -22,33 +25,13 @@ function p95(arr: number[]): number {
 }
 
 const started = Date.now()
-
-// Same seed set for the cautious and greedy bots, so "cautious bot's median
-// vs greedy bot's ceiling" is a same-seeds comparison, not two populations.
 const seeds = Array.from({ length: trials }, (_, i) => i + 1)
-
-const cautious = seeds.map((s) => runBotTrial(s))
-const cautiousCrossings = cautious.map((r) => r.crossed)
-const cautiousMedian = median(cautiousCrossings)
 
 const greedy = seeds.map((s) => runGreedyBotTrial(s))
 const greedyCrossings = greedy.map((r) => r.crossed)
-const greedyMedian = median(greedyCrossings)
-const greedyP95 = p95(greedyCrossings)
-const greedyMax = Math.max(...greedyCrossings)
-
-const relativeGap = cautiousMedian > 0 ? (greedyP95 - cautiousMedian) / cautiousMedian : 0
-// The brief's original relativeGap (see CALIBRATION.md's existing note on
-// the metric) was luck-driven spread across seeds AT ONE FIXED skill level
-// — p95 vs median of the SAME bot's own distribution, not one bot's ceiling
-// against a different bot's median. Reported alongside the literal ask
-// above because the two answer different questions and only one of them
-// can plausibly land near a single-digit-percent target.
-const relativeGapFixedSkill = greedyMedian > 0 ? (greedyP95 - greedyMedian) / greedyMedian : 0
-
 const lootRuns = greedy.filter((r) => r.lootAvailable)
 const lootPickupRate = lootRuns.length ? lootRuns.filter((r) => r.lootPickedUp).length / lootRuns.length : 0
-const lootKeptRate = lootRuns.length ? lootRuns.filter((r) => r.lootPickedUp && r.win).length / lootRuns.length : 0
+const lootKeptRateGreedy = lootRuns.length ? lootRuns.filter((r) => r.lootPickedUp && r.win).length / lootRuns.length : 0
 
 // impossibleShare uses its own seed range (offset well clear of the ones
 // above) purely so a curious reader diffing seed lists doesn't wonder why
@@ -57,22 +40,41 @@ const lootKeptRate = lootRuns.length ? lootRuns.filter((r) => r.lootPickedUp && 
 const solverSeeds = Array.from({ length: trials }, (_, i) => 100000 + i)
 const impossible = impossibleShare(solverSeeds)
 
+// P0: the actual question — is the loot playable for a bot that plays to
+// maximize expected value? Own seed range too, same reasoning as above.
+const rationalSeeds = Array.from({ length: trials }, (_, i) => 200000 + i)
+const rational = rationalSeeds.map((s) => runRationalBotTrial(s))
+const rationalLootRuns = rational.filter((r) => r.lootAvailable)
+const ticketRate = rational.filter((r) => r.ticketed).length / trials
+const lootKeptRateRational = rationalLootRuns.length ? rationalLootRuns.filter((r) => r.lootKept).length / rationalLootRuns.length : 0
+const tenthTicks = rational.map((r) => r.tickAtTenth).filter((v): v is number => v !== null)
+const tenthSecsLeft = rational.map((r) => r.secsLeftAtTenth).filter((v): v is number => v !== null)
+const medianSecsToTenth = tenthTicks.length ? (median(tenthTicks) * TICK_MS) / 1000 : null
+const medianSecsLeftAtTenth = tenthSecsLeft.length ? median(tenthSecsLeft) : null
+
 const summary = {
   trials,
-  relativeGap: Number(relativeGap.toFixed(4)),
-  relativeGapFixedSkill: Number(relativeGapFixedSkill.toFixed(4)),
-  cautiousMedianCrossings: cautiousMedian,
-  greedyMedianCrossings: greedyMedian,
-  greedyP95Crossings: greedyP95,
-  greedyMaxCrossings: greedyMax,
   impossibleShare: Number(impossible.toFixed(4)),
-  lootPickupRate: Number(lootPickupRate.toFixed(4)),
-  lootKeptRate: Number(lootKeptRate.toFixed(4)),
-  lootRunCount: lootRuns.length,
-  greedyOutcomeBreakdown: greedy.reduce<Record<string, number>>((acc, r) => {
-    acc[r.outcome] = (acc[r.outcome] ?? 0) + 1
-    return acc
-  }, {}),
+  greedy: {
+    lootPickupRate: Number(lootPickupRate.toFixed(4)),
+    lootKeptRate: Number(lootKeptRateGreedy.toFixed(4)),
+    medianCrossings: median(greedyCrossings),
+    p95Crossings: p95(greedyCrossings),
+    maxCrossings: Math.max(...greedyCrossings),
+    lootRunCount: lootRuns.length,
+  },
+  rational: {
+    ticketRate: Number(ticketRate.toFixed(4)),
+    lootKeptRate: Number(lootKeptRateRational.toFixed(4)),
+    lootRunCount: rationalLootRuns.length,
+    reachedTenthRate: Number((tenthTicks.length / trials).toFixed(4)),
+    medianSecsToTenth,
+    medianSecsLeftAtTenth,
+    outcomeBreakdown: rational.reduce<Record<string, number>>((acc, r) => {
+      acc[r.outcome] = (acc[r.outcome] ?? 0) + 1
+      return acc
+    }, {}),
+  },
   elapsedMs: Date.now() - started,
 }
 
