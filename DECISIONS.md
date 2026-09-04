@@ -140,3 +140,21 @@ abandoned grid engine's own calibration, which may not even transfer.
 `lootPickupRate` (68.8%) is the one number here that's a clean, useful
 result on its own, not a target to hit.
 
+## 3. Reinforcement
+
+**Retuned rather than removed.** `REIN_LEAD_S` went from 20 to 11
+(measured: 0% trigger rate down to 16.3% at 5000 trials — inside the
+15-25% target). Chose retuning over removal because the mechanic has real,
+already-built presentation (the "A CRUISER JUST CUT IN" banner, the
+red-flood critical wash it forces, the reinforcement car animation and
+`laugh()` sting) that only ever fires in this one moment — deleting it would
+throw that away for a problem that a one-constant change actually fixes.
+`REIN_FROM` (crossing 7, when reinforcement becomes eligible at all) and
+`POLICE_MAX_LEAD_S` (26, the *separate* elastic-push threshold that scales
+police speed) are untouched — this and the earlier `POLICE_PX`/
+`POLICE_HEAD_START_S` retune are now two independently-tuned levers, and
+conflating them again risked repeating the earlier mistake (documented in
+`CALIBRATION.md`'s police-pacing section, from before this session) where
+lowering `POLICE_MAX_LEAD_S` directly suppressed reinforcement by preventing
+lead from ever growing large enough to arm it.
+

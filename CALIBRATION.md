@@ -49,10 +49,36 @@ was the difference between "hard but fair" and "median run doesn't reach
 these again, one change at a time.
 
 Side effect: `reinforcementTriggerRate` dropped from 97% to ~0% — median lead
-at the 7th crossing is now ~7s, nowhere near the 20s trigger. With baseline
-pressure this much higher, reinforcement no longer has a job to do against a
-forward-moving player; it's now a backstop for outlier-fast runs rather than
-routine. Worth a deliberate look before phase 3, but not blocking.
+at the 7th crossing is now ~7s, nowhere near the (then) 20s trigger. Retuned
+separately below.
+
+## Reinforcement retuned (`REIN_LEAD_S`: 20 → 11)
+
+Measured first: `reinforcementTriggerRate` was 0% at 2000 trials with
+`REIN_LEAD_S = 20` — confirming the note above wasn't just an artifact of a
+small sample. Median lead at crossing 7 sits around 7.2s; with a 20s
+threshold, reinforcement was reachable only by wildly outlier-fast runs, in
+practice never.
+
+Swept `REIN_LEAD_S` down against the harness (2000-3000 trials each) to find
+where the trigger rate lands in the 15-25% target band:
+
+| REIN_LEAD_S | reinforcementTriggerRate | successRate | medianCrossings |
+|---|---|---|---|
+| 20 (prior) | 0% | 64.8% | 10 |
+| 12 | 7.9% | 64.2% | 10 |
+| **11** | **16.3%** (5000 trials) | **60.9%** | **10** ← shipped |
+| 10 | 24.5% | 57.9% | 10 |
+| 8 | 43.9% | 53.4% | 10 |
+| 6 | 65.5% | 48.8% | 9 |
+
+Shipped `REIN_LEAD_S = 11`: comfortably inside 15-25% (16.3% at 5000
+trials), with only a modest cost to `successRate` (64.8% → 60.9%) and no
+change to `medianCrossings`. `REIN_FROM` (7) and `POLICE_MAX_LEAD_S` (26,
+the elastic-push threshold, unrelated to reinforcement's own trigger) are
+untouched. Re-sweep the same way (`for v in ...; do sed ...REIN_LEAD_S...;
+npx tsx src/harness/cli.ts N; done`, see git history of this file) before
+nudging this again.
 
 Notes on reading the harness output in general:
 
