@@ -6,7 +6,7 @@
 // heistRun.ts has no density/speedMul config surface (the prototype's world
 // is a fixed rule set, randomised per run via Math.random()), so there is no
 // grid to sweep — this runs many independent trials of that one rule set.
-import { ESCAPE_AT, HeistRun, REIN_FROM, TICK_MS, resultOf, type ReplayInput, type Result, type Vehicle } from '@/game/heistRun'
+import { HeistRun, REIN_FROM, TICK_MS, resultOf, type ReplayInput, type Result, type Vehicle } from '@/game/heistRun'
 
 const MAX_TICKS = Math.ceil(65000 / TICK_MS) // hard stop past the 60s run clock, safety margin
 
@@ -77,9 +77,10 @@ export function runBotTrial(seed?: number, paintingRoll: () => boolean = () => f
   let ticks = 0
 
   while (run.live() && ticks < MAX_TICKS) {
-    // The rational move once the door is armed: bank the win. Grinding for
-    // more crossings only adds risk for a bot that doesn't value loot.
-    if (run.state.crossed >= ESCAPE_AT) { run.escapeNow(); break }
+    // The rational move for a bot that doesn't value loot: take the
+    // ticket-only exit the instant the decision window opens. Waiting out
+    // the window only adds risk for nothing it cares about.
+    if (run.state.mode === 'armed') { run.escapeNow(); break }
     const dir = decideMove(run)
     if (dir) run.onKey(dir)
     else if (!run.started) run.onKey('ArrowUp') // first move only: get the run started

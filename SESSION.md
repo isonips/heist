@@ -1,21 +1,25 @@
 # Session summary
 
-Three working sessions on the same brief, continued in one file. First
+Four working sessions on the same brief, continued in one file. First
 pass: one seeded engine (`src/engine/` dead code deleted), a difficulty/RNG
 measurement pass, reinforcement retuned, address-based identity (stubbed),
 `/embed`, a splash screen. Second pass: two of the first pass's metric
 targets confirmed invalid and dropped, a third bot answering "is the loot
 actually playable" (P0 — found `lootKeptRate` 0%, reported as a design
 finding), and a real backend (Supabase) for profile/stats/feed/global drop
-counters (P1, P2). Third pass (this one): the P0 finding acted on by
-changing the conservation rule itself (loot banked by pushing past a
-threshold, not by surviving the whole clock), P1 re-checked and still
-blocked from this sandbox, and demo-run telemetry + an unlisted
-human-vs-bot comparison page (P2). Details and reasoning for every
-non-obvious call are in `DECISIONS.md`; tuning history and every measured
-number is in `CALIBRATION.md`.
+counters (P1, P2). Third pass: the P0 finding acted on by changing the
+conservation rule itself (loot banked by pushing past a crossing
+threshold, `LOOT_ESCAPE_AT`, not by surviving the whole clock), P1
+re-checked and still blocked from this sandbox, and demo-run telemetry +
+an unlisted human-vs-bot comparison page (P2). Fourth pass (this one):
+`LOOT_ESCAPE_AT` itself replaced by a fixed-length decision window
+(commit or walk away, once, ten seconds after the door arms) per new
+instruction, swept against three new balance targets, and reported
+honestly when none of the three requested knobs could reach them. Details
+and reasoning for every non-obvious call are in `DECISIONS.md`; tuning
+history and every measured number is in `CALIBRATION.md`.
 
-Every commit in both sessions builds, typechecks, and lints clean
+Every commit across all four sessions builds, typechecks, and lints clean
 (`npx tsc --noEmit`, `npx eslint src --max-warnings=0`, `npm run build`) —
 checked before each one, not just at the end.
 
@@ -70,6 +74,29 @@ checked before each one, not just at the end.
   `ESCAPE — TICKET + LOOT` depending on `hud.crossed`, with a "N more to
   keep it" counter while carrying something short of the threshold. Full
   reasoning: `DECISIONS.md`'s "P0: LOOT_ESCAPE_AT" entry.
+- **P0 (session 4): `LOOT_ESCAPE_AT` replaced outright — a fixed decision
+  window, not a second crossing threshold.** New instruction: the game is
+  now genuinely unbounded past `ESCAPE_AT` (crossing 12 vs. 30 pays out
+  identically); reaching the 10th instead opens a `WINDOW_S = 10` second
+  window. Escape inside it and it's ticket-only, same as before. Let it
+  lapse — the default, no button press needed — and the run is committed:
+  no more escape, ever; only holding to the natural end of the 60s clock
+  pays out everything, including loot picked up after the window opened.
+  Swept `POLICE_PX`, `POLICE_HEAD_START_S`, and a new `TRAFFIC_DENSITY`
+  multiplier against three targets (median secs to the 10th: 40-48s;
+  reach-10 rate: 45-55%; conditional survival after commit: 50-65%) with
+  the greedy bot (never escapes, so reaching the window always lapses into
+  committed unless caught first). **None of the three knobs reach any of
+  the targets** — median secs-to-10th stays clamped between ~17s and ~24s
+  across the entire range tested (0.85x-2x traffic density, PX 3.0-6.0,
+  head start [7,9] down to [1,3], individually and combined), because
+  these levers only change whether a run *survives* to the 10th, not how
+  fast it *gets there* once nothing kills it — that pace is set by the map
+  generation and hop cadence, outside this sweep's scope. No value forced;
+  all three constants ship unchanged from their pre-sweep baseline, per
+  the brief's own instruction for exactly this outcome. Full table and
+  diagnosis: `CALIBRATION.md`'s "P0 follow-up 2" entry; mechanic writeup:
+  `DECISIONS.md`'s "P0: the commitment window replaces LOOT_ESCAPE_AT".
 
 ## Reinforcement — done (session 1)
 
@@ -183,11 +210,13 @@ README.md replaced entirely; updated again this session for the backend.
    `/stats` shows real human runs, and an address's progress follows it to
    a second browser) — this sandbox couldn't do it (network policy), but a
    normal browser hitting the deployed app can.
-3. `LOOT_ESCAPE_AT = 11` is shipped (session 3) — no longer a decision
-   waiting on the project owner. If the target band or the underlying
-   police/clock calibration ever changes, re-run
-   `src/harness/sweepLootEscape.ts` rather than hand-picking a new value;
-   full sweep table in `CALIBRATION.md`.
+3. **The commitment-window balance targets (session 4) are unmet and
+   waiting on a decision only the project owner can make.** `POLICE_PX`/
+   `POLICE_HEAD_START_S`/`TRAFFIC_DENSITY` can't reach 40-48s median
+   time-to-10th without a lever outside this sweep's scope — most likely
+   `buildWorld()`'s own lane-count roll or the base traffic scroll speed
+   (`TRAFFIC_PX`), both untouched per this session's standing rule about
+   map generation. Full diagnosis: `CALIBRATION.md`'s "P0 follow-up 2".
 4. **Privy** — needs `NEXT_PUBLIC_PRIVY_APP_ID`, then `connectPrivy()` in
    `identity.ts` gets its real implementation.
 5. **On-chain ledger / Solidity port** — still out of scope; the

@@ -28,6 +28,11 @@ const SPACING = { car: 152, truck: 200 }
 const SAFE: Record<string, boolean> = { pave: true, stop: true }
 
 export const TRAFFIC_PX = 4
+// Multiplier on inverse lane spacing — 1 is the original baseline, greater
+// than 1 packs vehicles tighter (smaller gaps between them), less than 1
+// spreads them out. Swept alongside POLICE_PX/POLICE_HEAD_START_S for the
+// commitment-window balance below (see CALIBRATION.md's P0 follow-up).
+export const TRAFFIC_DENSITY = 1
 export const POLICE_MAX_LEAD_S = 26
 export const REIN_FROM = 7
 export const REIN_LEAD_S = 11
@@ -35,16 +40,19 @@ export const POLICE_PX = 4.0
 export const POLICE_HEAD_START_S: [number, number] = [5, 7]
 export const TICK_MS = 110
 export const ESCAPE_AT = 10
-// Escaping at ESCAPE_AT secures the ticket only. Loot/held items are only
-// kept if you're still going (and escape, or the clock catches you) at
-// LOOT_ESCAPE_AT or later — a bounded number of extra crossings the player
-// can weigh against their own current lead, replacing the old "survive the
-// whole open clock" condition that the P0 rational-bot measurement found
-// was never actually reachable (lootKeptRate 0%, see CALIBRATION.md's P0
-// section and its follow-up). Value picked by sweeping the harness's
-// rational bot 11-16 for the lowest one clearing 25-40% lootKeptRate — see
-// CALIBRATION.md.
-export const LOOT_ESCAPE_AT = 11
+// The decision window: WINDOW_S seconds that open the instant crossed
+// reaches ESCAPE_AT (see step()). Escaping inside it secures the ticket
+// only, forfeiting everything carried. Letting it lapse — the default,
+// since nothing has to be pressed for that to happen — commits the run:
+// no more escape, ever, and only surviving to the 60s clock's natural end
+// pays out ticket + loot (see clock()). Replaces the old LOOT_ESCAPE_AT (a
+// second, later crossing count): that asked players to survive an
+// open-ended amount of extra time no calibration could make winnable often
+// enough (lootKeptRate 0% at every value swept 11-16 — CALIBRATION.md's P0
+// section). A short, visible, bounded countdown is a decision a player can
+// actually weigh against what's on the road; an open-ended survival
+// requirement wasn't.
+export const WINDOW_S = 10
 export const LOOT_FROM = 6
 export const LIVES_MAX = 3
 export const DURATION_S = 60
@@ -75,7 +83,7 @@ export const ITEM_ORDER: ItemKey[] = ['oldMan', 'pileUp', 'shortcut', 'safe', 'h
 
 export type Band = { k: string; h: number; dir?: number; spacing?: number; phase?: number; bottom: number; top: number; permanentBlock?: boolean }
 export type Vehicle = { x: number; w: number; kind: string; colour: { body: string; shade: string; light: string } }
-export type Mode = 'run' | 'police' | 'hit' | 'armed' | 'caught' | 'paid' | 'lost' | 'mobile'
+export type Mode = 'run' | 'police' | 'hit' | 'armed' | 'committed' | 'caught' | 'paid' | 'lost' | 'mobile'
 export type Hands = 'ticket' | 'wallet' | 'painting' | 'both' | 'empty'
 export type Dir = 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight'
 
@@ -87,6 +95,10 @@ export type RunState = {
   lives: number
   blink: number
   timeLeft: number
+  // Seconds left in the post-ESCAPE_AT decision window — 0 before it opens
+  // and once it's resolved (armed -> committed, or an escape). See
+  // WINDOW_S; only meaningful while mode === 'armed'.
+  windowLeft: number
   outcome: 'collared' | 'flattened' | 'timeout'
   heldItem: ItemKey | null
   // Rolled the moment the wallet is picked up, revealed only at the end of
@@ -121,7 +133,7 @@ export type Result = {
 }
 
 export class HeistRun {
-  state: RunState = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, outcome: 'collared', heldItem: null, walletOutcome: null, walletAmount: 0 }
+  state: RunState = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, windowLeft: 0, outcome: 'collared', heldItem: null, walletOutcome: null, walletAmount: 0 }
   // The seed this run's world and every roll in it derive from — see
   // DECISIONS.md #1. Passed explicitly for a replay; otherwise picked here
   // so ordinary play still gets a fresh, recorded, verifiable world.
@@ -211,7 +223,7 @@ export class HeistRun {
 
   live(): boolean {
     const m = this.state.mode
-    return m === 'run' || m === 'police' || m === 'armed' || m === 'mobile'
+    return m === 'run' || m === 'police' || m === 'armed' || m === 'committed' || m === 'mobile'
   }
 
   lives(): number {
@@ -312,7 +324,7 @@ export class HeistRun {
       const wider = 1 + 0.1 * (lanes - 1)
       for (let n = 0; n < lanes; n++) {
         const isTruck = n === truckAt
-        const spacing = Math.round((isTruck ? SPACING.truck : SPACING.car) * wider)
+        const spacing = Math.round((isTruck ? SPACING.truck : SPACING.car) * wider / TRAFFIC_DENSITY)
         let phase: number
         ;[phase, this.trafficRng] = nextRange(this.trafficRng, 0, spacing)
         out.push({
@@ -377,7 +389,7 @@ export class HeistRun {
     this.tick = 0
     this.inputLog = []
     this.actionLog = []
-    this.state = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, outcome: 'collared', heldItem: null, walletOutcome: null, walletAmount: 0 }
+    this.state = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, windowLeft: 0, outcome: 'collared', heldItem: null, walletOutcome: null, walletAmount: 0 }
   }
 
   stopX(index: number): number { return ((index * 67) % (W - 80)) + 8 }
@@ -602,21 +614,18 @@ export class HeistRun {
     }
   }
 
-  /** Escaping at ESCAPE_AT..LOOT_ESCAPE_AT-1 keeps the ticket only —
+  /** Only live during the decision window (mode 'armed') — the WINDOW_S
+   *  seconds right after crossing ESCAPE_AT. Escaping here always forfeits
    *  everything carried (loot, any held item, credit for items already
-   *  used this run) is forfeited. From LOOT_ESCAPE_AT on, escaping keeps
-   *  both. Being caught or run out of lives loses everything regardless of
-   *  crossed, unchanged. */
+   *  used this run): it's the ticket-only exit. Once the window lapses
+   *  into 'committed' (see clock()), this is a no-op — there's no going
+   *  back, by design. Being caught or run out of lives loses everything
+   *  regardless of mode, unchanged. */
   escapeNow(): void {
-    if (this.state.crossed >= ESCAPE_AT && this.live()) {
-      const keepsLoot = this.state.crossed >= LOOT_ESCAPE_AT
+    if (this.state.mode === 'armed') {
       this.actionLog.push([this.tick, 'Escape'])
-      if (!keepsLoot) {
-        this.usedItemsThisRun = []
-        this.state = { ...this.state, mode: 'paid', taken: {}, hands: 'ticket', heldItem: null, walletOutcome: null, walletAmount: 0 }
-      } else {
-        this.state = { ...this.state, mode: 'paid' }
-      }
+      this.usedItemsThisRun = []
+      this.state = { ...this.state, mode: 'paid', windowLeft: 0, taken: {}, hands: 'ticket', heldItem: null, walletOutcome: null, walletAmount: 0 }
     }
   }
 
@@ -630,7 +639,14 @@ export class HeistRun {
       const left = this.bands[this.bi].k
       if (this.bi === this.bands.length - 1) { this.bi = 0; this.lap += this.world }
       else this.bi += 1
-      if (SAFE[this.bands[this.bi].k] && !SAFE[left]) this.state = { ...this.state, crossed: this.state.crossed + 1 }
+      if (SAFE[this.bands[this.bi].k] && !SAFE[left]) {
+        const crossed = this.state.crossed + 1
+        // Edge-triggered on the first time crossed reaches ESCAPE_AT, not
+        // "crossed is currently >= ESCAPE_AT" — once opened, the window
+        // stays open even if a later backward hop dips crossed back down.
+        const opensWindow = this.state.mode === 'run' && crossed >= ESCAPE_AT
+        this.state = { ...this.state, crossed, ...(opensWindow ? { mode: 'armed' as Mode, windowLeft: WINDOW_S } : {}) }
+      }
       this.pickUp()
     } else if (this.dirV < 0 && this.wy <= this.hopTo) {
       this.wy = this.hopTo
@@ -705,20 +721,27 @@ export class HeistRun {
     this.ms += TICK_MS
     if (this.ms < 1000) return
     this.ms -= 1000
+
+    // The decision window ticks down on the same one-second cadence as the
+    // main clock. Inaction is the default outcome by design (see
+    // WINDOW_S): letting it run out commits the run rather than failing
+    // it — the player has to actively press Escape to take the safe exit
+    // instead.
+    if (this.state.mode === 'armed') {
+      const w = this.state.windowLeft - 1
+      this.state = w > 0 ? { ...this.state, windowLeft: w } : { ...this.state, windowLeft: 0, mode: 'committed' }
+    }
+
     const t = this.state.timeLeft - 1
     if (t > 0) { this.state = { ...this.state, timeLeft: t }; return }
-    // The clock running out is not a choice, but it follows the same
-    // ticket/loot split escapeNow() does: ESCAPE_AT secures the ticket,
-    // LOOT_ESCAPE_AT secures whatever's carried too. Short of ESCAPE_AT
-    // it's a loss, same shape as being caught.
-    if (this.state.crossed >= ESCAPE_AT) {
-      const keepsLoot = this.state.crossed >= LOOT_ESCAPE_AT
-      if (!keepsLoot) {
-        this.usedItemsThisRun = []
-        this.state = { ...this.state, timeLeft: 0, mode: 'paid', taken: {}, hands: 'ticket', heldItem: null, walletOutcome: null, walletAmount: 0 }
-      } else {
-        this.state = { ...this.state, timeLeft: 0, mode: 'paid' }
-      }
+    // Clock hits zero. Reaching it at all means the ticket was never
+    // escaped away — 'committed', or still 'armed' if the window's own
+    // countdown hadn't finished yet, both pay out everything: running out
+    // the main clock without escaping is itself "held to the end". Short
+    // of ESCAPE_AT (mode never left 'run') it's a loss, same shape as
+    // being caught.
+    if (this.state.mode === 'committed' || this.state.mode === 'armed') {
+      this.state = { ...this.state, timeLeft: 0, mode: 'paid' }
     } else {
       this.loserTune()
       this.state = { ...this.state, timeLeft: 0, mode: 'lost', outcome: 'timeout' }

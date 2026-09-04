@@ -662,3 +662,103 @@ slower on a real machine; 500 was not reduced despite the earlier
 (pre-audio-fix) appearance of trouble, since the root cause turned out to
 be a real bug rather than a sandbox-specific resource limit.
 
+## P0: the commitment window replaces LOOT_ESCAPE_AT
+
+New brief, new end-game shape — `LOOT_ESCAPE_AT` (the previous round's
+fix) is gone, replaced with a fixed-length decision window, per explicit
+instruction. `heistRun.ts`:
+
+- The game is genuinely unbounded past `ESCAPE_AT` now — no second
+  crossing threshold at all, and nothing about the payout depends on how
+  far past 10 a run goes.
+- `WINDOW_S = 10` seconds open the instant `crossed` first reaches
+  `ESCAPE_AT` (edge-triggered in `step()`'s forward-crossing branch, gated
+  on `mode === 'run'` so it can't re-fire and doesn't reopen if a later
+  backward hop dips `crossed` back under 10 — once opened, it's opened for
+  good). Mode becomes `'armed'`, `state.windowLeft` starts counting down
+  once per elapsed second in `clock()`, the same cadence `timeLeft`
+  already used.
+- `escapeNow()` now only does anything while `mode === 'armed'` — the
+  ticket-only exit, forfeiting everything carried, exactly as before.
+  Once the window's countdown reaches 0, `clock()` flips mode to
+  `'committed'` and `escapeNow()` becomes a permanent no-op: no more exit,
+  by design, matching "il est engagé, plus de retour possible" literally
+  rather than just in spirit.
+- Committed play is not a special code path — `'committed'` (and
+  `'armed'`) are both in `live()`, so police/traffic/reinforcement/collide
+  all keep running exactly as they did before this round; the only thing
+  that changes is which further transitions are reachable.
+- Reaching the natural end of the 60s clock (`clock()`'s existing
+  `t <= 0` branch) now pays out everything whenever mode is `'committed'`
+  *or* still `'armed'` — the latter covers the edge case where a run
+  reaches the 10th crossing late enough that the window's own 10-second
+  countdown hasn't finished when the main clock does. The brief didn't
+  spell out what should happen there; the read taken is that reaching
+  literal time-zero without ever pressing Escape *is* "held to the end" by
+  definition, regardless of whether the window's separate internal
+  counter had also finished — treating it as a loss instead would
+  penalize a run for time running out a beat before its own decision
+  clock did, which contradicts the brief's own framing that inaction
+  defaults toward commitment, not away from it.
+- Loot/items picked up after the window opens (mid-window or after
+  committing) are ordinary `pickUp()` calls, ungated by mode — "le butin
+  ramassé après la 10e compte aussi" falls out of not touching `pickUp()`
+  at all, rather than needing a special case.
+
+**Bots.** `bot.ts` (cautious): escapes the instant `mode === 'armed'`
+instead of the instant `crossed >= ESCAPE_AT` — same trigger tick in
+practice, but the guard now matches what actually gates `escapeNow()`.
+`greedyBot.ts` (never escapes): unchanged in policy — it was already the
+right shape for "let the window lapse" — but gained `reachedTenth`,
+`tickAtTenth`, and `reachedCommitted` telemetry, since this bot became the
+sweep's measurement vehicle (below). `rationalBot.ts`: the old EV logic
+(`lootEscapeAt`/`safeLeadS` thresholds, re-evaluated every tick) doesn't
+map onto the new mechanic at all — there is no "how much further" decision
+anymore, only "escape now or let it lapse", and that choice is only live
+during the window. Simplified to: while `mode === 'armed'`, escape only if
+there's nothing worth protecting (`hasPendingValue`); otherwise hold. This
+game still has no priced-in value for loot (no real point/EV system), so
+"hold whenever there's something at stake" is the more honest reading of
+"rational" than fabricating a threshold against an unpriced payoff — same
+judgment call as the old bot's file comment made, carried over to the new
+shape.
+
+**Sweep.** Full table and diagnosis in `CALIBRATION.md`'s matching P0
+follow-up entry — summary: none of the three requested knobs
+(`POLICE_PX`, `POLICE_HEAD_START_S`, a new `TRAFFIC_DENSITY` multiplier)
+can move median-seconds-to-the-10th-crossing out of a ~17-24s band, in
+either direction, individually or combined; they only trade reach-10 rate
+and post-commit survival against each other. Per the brief's own
+instruction for exactly this outcome, **no value was forced** —
+`POLICE_PX`/`POLICE_HEAD_START_S` stay unchanged, `TRAFFIC_DENSITY` ships
+at its neutral default (1×, byte-for-byte the old spacing). Sweep
+methodology: sed-edited the three module constants and re-invoked a fresh
+`npx tsx` process per combination (module-level consts, not runtime
+params — same pattern as earlier `POLICE_PX`/`REIN_LEAD_S` sensitivity
+sweeps), always restored from a pre-sweep backup between combinations and
+confirmed byte-identical to the pre-sweep file afterward. New script:
+`src/harness/sweepWindow.ts` (the old `sweepLootEscape.ts` was deleted —
+it swept a mechanic that no longer exists).
+
+**UI.** `HeistGame.tsx`'s top alert banner now branches three ways instead
+of two: while `mode === 'armed'` it replaces the ordinary siren banner
+with a flashing (alternates by `tick` parity, same idiom the game already
+uses elsewhere for urgency) red/amber bar reading `{windowLeft}s — ESCAPE
+NOW · ticket` against `HOLD · ticket + loot` — the brief's exact two-option
+framing, plus the countdown it asked to be "visible et pressant"; while
+`mode === 'committed'` it shows a non-flashing, persistent `NO WAY OUT —
+COMMITTED` bar until the run ends, satisfying "un marqueur permanent";
+otherwise the original alert-level banner is unchanged. The bottom control
+row keeps the actual `ESCAPE NOW · TICKET` button (interaction stays where
+every other action button already lives) plus a passive `hold for ticket +
+loot` / `no way out — hold to the end` label alongside it. Not manually
+clicked through to crossing 10 in a live browser — same call as last
+round's `LOOT_ESCAPE_AT` UI (a scripted bot died at crossing 2 there, and
+building a smarter one wasn't judged worth it against a harness that
+already exercises these exact transitions thousands of times per sweep
+row). What *was* checked live: the page loads, the mode-select and initial
+Play screen render, the ordinary alert banner still renders correctly
+after a few real keypresses (confirming the new three-way branch's
+`showBanner` fallthrough didn't regress), and no console/runtime errors
+fire in any of it.
+

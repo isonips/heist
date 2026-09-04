@@ -7,7 +7,7 @@
 // of lives, or the clock). That's what makes it useful for lootPickupRate.
 // (It was also used for relativeGap, since removed as a metric — see
 // CALIBRATION.md's "relativeGap: dropped" section.)
-import { HeistRun, resultOf, type Dir, type Result } from '@/game/heistRun'
+import { ESCAPE_AT, HeistRun, TICK_MS, resultOf, type Dir, type Result } from '@/game/heistRun'
 import { isSafe } from './bot'
 
 const MAX_TICKS = Math.ceil(65000 / 110)
@@ -56,6 +56,16 @@ export type GreedyTrialResult = {
   lootAvailable: boolean
   lootPickedUp: boolean
   lootKept: boolean
+  // This bot never presses Escape, so reaching the window (mode 'armed')
+  // always lapses into 'committed' unless the run ends first (caught / out
+  // of lives) — which makes it the right vehicle for the window-balance
+  // sweep: reachedTenth/tickAtTenth answer "how often, how fast do players
+  // even get the decision", and reachedCommitted + win together answer
+  // "of those who let it lapse, how many hold to the end" — see
+  // sweepWindow.ts.
+  reachedTenth: boolean
+  tickAtTenth: number | null
+  reachedCommitted: boolean
   result: Result
 }
 
@@ -64,6 +74,8 @@ export function runGreedyBotTrial(seed?: number, paintingRoll: () => boolean = (
   run.soundOn = false // headless in Node; when run live in a browser (e.g. /stats), this stops it from opening a real AudioContext per trial
   const lootAvailable = Object.keys(run.lootPlan).length > 0
   let ticks = 0
+  let tickAtTenth: number | null = null
+  let reachedCommitted = false
   while (run.live() && ticks < MAX_TICKS) {
     const dir = decideGreedyMove(run)
     if (dir) run.onKey(dir)
@@ -71,6 +83,8 @@ export function runGreedyBotTrial(seed?: number, paintingRoll: () => boolean = (
     if (run.state.heldItem) run.useItem() // a loot-seeking player wouldn't sit on a held item either
     run.advance()
     ticks++
+    if (tickAtTenth === null && run.state.crossed >= ESCAPE_AT) tickAtTenth = run.tick
+    if (!reachedCommitted && run.state.mode === 'committed') reachedCommitted = true
   }
   const win = run.state.mode === 'paid'
   return {
@@ -80,11 +94,19 @@ export function runGreedyBotTrial(seed?: number, paintingRoll: () => boolean = (
     ticks,
     seed: run.seed,
     lootAvailable,
-    // pickedUpLootEver (not state.taken, which a LOOT_ESCAPE_AT forfeiture
-    // now clears — see heistRun.ts) so this stays "was it ever picked up"
-    // regardless of whether it was later kept.
+    // pickedUpLootEver (not state.taken, which an early escape or a loss
+    // short of the window still clears — see heistRun.ts) so this stays
+    // "was it ever picked up" regardless of whether it was later kept.
     lootPickedUp: run.pickedUpLootEver,
     lootKept: win && run.state.hands !== 'ticket',
+    reachedTenth: tickAtTenth !== null,
+    tickAtTenth,
+    reachedCommitted,
     result: resultOf(run),
   }
+}
+
+/** tickAtTenth in seconds — convenience for the sweep/measure scripts. */
+export function secsAtTenth(r: GreedyTrialResult): number | null {
+  return r.tickAtTenth === null ? null : (r.tickAtTenth * TICK_MS) / 1000
 }

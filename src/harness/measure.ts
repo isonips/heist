@@ -48,9 +48,9 @@ const rationalLootRuns = rational.filter((r) => r.lootAvailable)
 const ticketRate = rational.filter((r) => r.ticketed).length / trials
 const lootKeptRateRational = rationalLootRuns.length ? rationalLootRuns.filter((r) => r.lootKept).length / rationalLootRuns.length : 0
 const tenthTicks = rational.map((r) => r.tickAtTenth).filter((v): v is number => v !== null)
-const tenthSecsLeft = rational.map((r) => r.secsLeftAtTenth).filter((v): v is number => v !== null)
 const medianSecsToTenth = tenthTicks.length ? (median(tenthTicks) * TICK_MS) / 1000 : null
-const medianSecsLeftAtTenth = tenthSecsLeft.length ? median(tenthSecsLeft) : null
+const committedRuns = rational.filter((r) => r.reachedCommitted)
+const conditionalSurvival = committedRuns.length ? committedRuns.filter((r) => r.ticketed).length / committedRuns.length : null
 
 const summary = {
   trials,
@@ -69,7 +69,7 @@ const summary = {
     lootRunCount: rationalLootRuns.length,
     reachedTenthRate: Number((tenthTicks.length / trials).toFixed(4)),
     medianSecsToTenth,
-    medianSecsLeftAtTenth,
+    conditionalSurvivalAfterCommit: conditionalSurvival === null ? null : Number(conditionalSurvival.toFixed(4)),
     outcomeBreakdown: rational.reduce<Record<string, number>>((acc, r) => {
       acc[r.outcome] = (acc[r.outcome] ?? 0) + 1
       return acc

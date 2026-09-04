@@ -1,41 +1,30 @@
-// P0: is the loot actually playable, for a bot that plays to maximize
-// expected value rather than distance? The cautious bot (bot.ts) always
-// escapes the instant it's armed — it never holds anything, so it can't
-// answer this. The greedy bot (greedyBot.ts) never escapes voluntarily — it
-// answers a different question (how far can a run go at all). This bot is
-// the one that actually faces the real decision a player holding loot
-// faces: escaping locks in the ticket and forfeits whatever's in hand;
-// staying risks the ticket *and* the loot for a chance to bank both.
+// Is the loot actually playable, for a bot that plays to maximize expected
+// value rather than distance? The cautious bot (bot.ts) always escapes the
+// instant the window opens — it never holds anything, so it can't answer
+// this. The greedy bot (greedyBot.ts) never escapes voluntarily — it
+// answers a different question (how far can a run go, how often is the
+// window even reached and held). This bot is the one that faces the real
+// decision a player holding something faces once the window opens:
+// escaping locks in the ticket and forfeits whatever's in hand; letting the
+// window lapse commits the ticket *and* the loot to surviving to the 60s
+// clock's end.
 //
-// Escaping without the ticket already secured (crossed < ESCAPE_AT) is
-// never in play — the door isn't armed yet, there's nothing to decide.
-//
-// SAFE_LEAD_S defaults to 0 — i.e. no proactive mid-push bailout — and
-// that default is itself a finding, not an assumption: an earlier version
-// of this bot used 13s (the game's own far/mid alert boundary) as an
-// interrupt threshold, re-evaluated every tick, and it masked
-// LOOT_ESCAPE_AT's effect almost entirely (lootKeptRate ~0% for every
-// value 11-16 tested — see CALIBRATION.md's P0 follow-up). The reason: a
-// fixed threshold calibrated for the OLD open-ended "survive to the
-// clock" goal fires on the very first tick after arming regardless of how
-// close LOOT_ESCAPE_AT is, because median lead is already below 13s by
-// crossing 10. That's not rational caution for a BOUNDED goal of one to a
-// few more crossings — bailing early there doesn't meaningfully reduce
-// risk (both paths take a similar number of ticks to actually reach
-// safety), it just forfeits loot for certain in runs that would often
-// have succeeded anyway. A genuinely rational bot commits once it decides
-// the bounded push is worth it (hasPendingValue) and doesn't second-guess
-// every tick afterward — same principle as not aborting a short sprint
-// halfway because of a stitch. This isn't a full Bellman-optimal solve of
-// the underlying MDP either (that needs its own P(survive | lead, ticks
-// left) study), but it's the more defensible reading of "rational" for
-// this specific bounded-goal shape, and the parameter stays overridable
-// for exactly this kind of sensitivity check.
-import { ESCAPE_AT, HeistRun, LOOT_ESCAPE_AT, TICK_MS, resultOf, type Result } from '@/game/heistRun'
+// The decision only exists while mode === 'armed' — that's the WINDOW_S
+// seconds after reaching ESCAPE_AT. Once it lapses into 'committed' there's
+// nothing left to decide (see heistRun.ts's escapeNow()), so this bot's
+// logic only has to run once, at the moment the window opens (loot picked
+// up after that, mid-window, is folded into that same read since
+// hasPendingValue() is checked every tick the window is still open, not
+// just once): if there's nothing worth protecting, take the ticket-only
+// exit immediately rather than gamble it for zero additional upside; if
+// there is, hold — this game has no priced-in EV model for loot yet (no
+// real point values), so "hold whenever there's something to lose" is the
+// more defensible read of "rational" than trying to fake a threshold
+// against an unpriced payoff.
+import { ESCAPE_AT, HeistRun, TICK_MS, resultOf, type Result } from '@/game/heistRun'
 import { decideGreedyMove } from './greedyBot'
 
 const MAX_TICKS = Math.ceil(65000 / TICK_MS)
-const SAFE_LEAD_S = 0
 
 function hasPendingValue(run: HeistRun): boolean {
   if (run.state.hands !== 'ticket') return true // already holding a wallet/painting/both
@@ -56,52 +45,26 @@ export type RationalTrialResult = {
   ticks: number
   reachedTenth: boolean
   tickAtTenth: number | null
-  secsLeftAtTenth: number | null
+  reachedCommitted: boolean
   result: Result
 }
 
-// lootEscapeAt mirrors LOOT_ESCAPE_AT exactly by default — it exists as a
-// parameter only so the sweep script (measure.ts / a one-off script) can
-// try other values without re-editing heistRun.ts by hand for each one.
-// It must always be passed the same value HeistRun's own escapeNow()/
-// clock() are using (LOOT_ESCAPE_AT itself, unless that constant is also
-// temporarily overridden the same way for the sweep), or the bot's
-// decision and the actual game rule it's being measured against drift
-// apart — see CALIBRATION.md's P0 sweep for how this was actually run.
-export function runRationalBotTrial(seed?: number, paintingRoll: () => boolean = () => false, lootEscapeAt: number = LOOT_ESCAPE_AT, safeLeadS: number = SAFE_LEAD_S): RationalTrialResult {
+export function runRationalBotTrial(seed?: number, paintingRoll: () => boolean = () => false): RationalTrialResult {
   const run = new HeistRun(seed, paintingRoll)
   run.soundOn = false // headless in Node; when run live in a browser (e.g. /stats), this stops it from opening a real AudioContext per trial
   const lootAvailable = Object.keys(run.lootPlan).length > 0
   let ticks = 0
   let tickAtTenth: number | null = null
-  let secsLeftAtTenth: number | null = null
+  let reachedCommitted = false
 
   while (run.live() && ticks < MAX_TICKS) {
-    if (tickAtTenth === null && run.state.crossed >= ESCAPE_AT) {
-      tickAtTenth = run.tick
-      secsLeftAtTenth = run.state.timeLeft
-    }
-    if (run.state.crossed >= ESCAPE_AT) {
-      if (!hasPendingValue(run)) {
-        // Nothing ever spawned this run, or whatever did is already
-        // resolved — no upside left to risking the ticket at all.
-        run.escapeNow()
-        break
-      }
-      if (run.state.crossed >= lootEscapeAt) {
-        // The bounded goal is met — loot's secured the instant you escape
-        // from here, so there's no reason left to keep risking the ticket.
-        run.escapeNow()
-        break
-      }
-      if (run.secsToArrest() <= safeLeadS) {
-        // Off (safeLeadS=0) by default — see the file comment. Kept as an
-        // override point for the sensitivity sweep, and for the pathological
-        // case of a non-zero threshold that's already this close to being
-        // caught outright regardless of choice.
-        run.escapeNow()
-        break
-      }
+    if (tickAtTenth === null && run.state.crossed >= ESCAPE_AT) tickAtTenth = run.tick
+    if (!reachedCommitted && run.state.mode === 'committed') reachedCommitted = true
+    if (run.state.mode === 'armed' && !hasPendingValue(run)) {
+      // Nothing worth protecting — lock in the ticket now rather than risk
+      // it for zero additional upside.
+      run.escapeNow()
+      break
     }
     const dir = decideGreedyMove(run)
     if (dir) run.onKey(dir)
@@ -123,7 +86,7 @@ export function runRationalBotTrial(seed?: number, paintingRoll: () => boolean =
     ticks,
     reachedTenth: tickAtTenth !== null,
     tickAtTenth,
-    secsLeftAtTenth,
+    reachedCommitted,
     result: resultOf(run),
   }
 }

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { theme } from '@/design/theme'
-import { ESCAPE_AT, H, HeistRun, LOOT_ESCAPE_AT, SCALE, TICK_MS, W, type ItemKey, type Mode } from '@/game/heistRun'
+import { ESCAPE_AT, H, HeistRun, SCALE, TICK_MS, W, type ItemKey, type Mode } from '@/game/heistRun'
 import { buildRun } from '@/game/buildRun'
 import { postFeedEvent } from '@/game/feedBus'
 import { exportDemoLogAsFile, getDemoLog, recordDemoRun } from '@/game/demoLog'
@@ -172,10 +172,9 @@ export default function HeistGame() {
   }, [mode, demo, ready])
 
   const ended = hud.mode === 'paid' || hud.mode === 'lost'
-  const canEscape = hud.crossed >= ESCAPE_AT && !ended
+  const windowOpen = hud.mode === 'armed'
+  const committed = hud.mode === 'committed'
   const carrying = hud.hands !== 'ticket' || hud.heldItem !== null
-  const escapeKeepsLoot = hud.crossed >= LOOT_ESCAPE_AT
-  const lootCrossingsLeft = Math.max(0, LOOT_ESCAPE_AT - hud.crossed)
 
   const toggleSound = useCallback(() => {
     runRef.current.toggleSound()
@@ -213,7 +212,57 @@ export default function HeistGame() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-      {showBanner && (
+      {windowOpen ? (
+        <div
+          style={{
+            width: W * SCALE,
+            maxWidth: '100%',
+            boxSizing: 'border-box',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            background: hud.tick % 2 === 0 ? theme.palette.sirenRed : theme.palette.amberDp,
+            color: theme.palette.white,
+            border: `2px solid ${theme.palette.ink}`,
+            padding: '4px 8px',
+            marginBottom: 4,
+            fontFamily: theme.type.family,
+            fontSize: theme.type.size.feed,
+          }}
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <PixelIcon name="siren" scale={2} />
+            {hud.windowLeft}s — ESCAPE NOW · ticket
+          </span>
+          <span>HOLD · ticket + loot</span>
+        </div>
+      ) : committed ? (
+        <div
+          style={{
+            width: W * SCALE,
+            maxWidth: '100%',
+            boxSizing: 'border-box',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            background: theme.palette.amberDk,
+            color: theme.palette.ink,
+            border: `2px solid ${theme.palette.ink}`,
+            padding: '4px 8px',
+            marginBottom: 4,
+            fontFamily: theme.type.family,
+            fontSize: theme.type.size.feed,
+          }}
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <PixelIcon name="siren" scale={2} />
+            NO WAY OUT — COMMITTED
+          </span>
+          <span>HOLD FOR TICKET + LOOT</span>
+        </div>
+      ) : showBanner ? (
         <div
           style={{
             width: W * SCALE,
@@ -238,7 +287,7 @@ export default function HeistGame() {
           </span>
           <span>{hud.mode === 'caught' ? 'NO ROAD LEFT' : skin.right}</span>
         </div>
-      )}
+      ) : null}
       <ResponsiveScale width={W * SCALE} height={H * SCALE + CONTROLS_HEIGHT}>
       {/* Controls live inside this fixed-size frame (not in normal page flow
           below it), so the panel's total height never depends on where the
@@ -344,14 +393,19 @@ export default function HeistGame() {
           <span style={{ fontFamily: theme.type.family, fontSize: theme.type.size.body, color: theme.palette.concrete }}>
             {demo ? 'DEMO — nothing at stake' : `${hud.crossed} / ${ESCAPE_AT} crossings`}
           </span>
-          {canEscape && (
+          {windowOpen && (
             <button onClick={() => runRef.current.escapeNow()} style={buttonStyle}>
-              {escapeKeepsLoot ? 'ESCAPE — TICKET + LOOT' : 'ESCAPE — TICKET ONLY'}
+              ESCAPE NOW · TICKET
             </button>
           )}
-          {canEscape && carrying && !escapeKeepsLoot && (
+          {windowOpen && carrying && (
             <span style={{ fontFamily: theme.type.family, fontSize: theme.type.size.feed, color: theme.palette.gold }}>
-              {lootCrossingsLeft} more to keep it
+              hold for ticket + loot
+            </span>
+          )}
+          {committed && (
+            <span style={{ fontFamily: theme.type.family, fontSize: theme.type.size.feed, color: theme.palette.sirenRed }}>
+              no way out — hold to the end
             </span>
           )}
           {hud.heldItem && !ended && (
@@ -387,9 +441,11 @@ const CONTROLS_HEIGHT = 40
 type HudSnapshot = ReturnType<typeof snapshot>
 function snapshot(run: HeistRun) {
   return {
+    tick: run.tick,
     lives: run.lives(),
     crossed: run.state.crossed,
     timeLeft: run.state.timeLeft,
+    windowLeft: run.state.windowLeft,
     mode: run.state.mode,
     outcome: run.state.outcome,
     hands: run.state.hands,

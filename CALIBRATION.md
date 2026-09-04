@@ -233,6 +233,130 @@ all) — a real, expected trade-off: committing past arming for a shot at
 loot means occasionally losing the ticket that a pure escape-at-10 bot
 would have banked for certain.
 
+## P0 follow-up 2: the commitment window (WINDOW_S) replaces LOOT_ESCAPE_AT
+
+New end-game shape, replacing the LOOT_ESCAPE_AT threshold above entirely
+(see DECISIONS.md's matching entry for the full mechanic writeup): the game
+is unbounded past `ESCAPE_AT` — reaching crossing 12 or 30 doesn't change
+the payout — but the 10th crossing opens a fixed `WINDOW_S = 10` second
+decision window. Escaping inside it still bags the ticket only (loot
+forfeited). Letting it lapse (the default — nothing has to be pressed)
+commits the run: no more escape, ever; only surviving to the 60s clock's
+natural end pays out the ticket *and* everything carried, including
+anything picked up after the window opened.
+
+The brief's own diagnosis of the old mechanic's failure: reaching the 10th
+currently takes ~22s, so the old rule ("survive the rest of the open 60s
+clock from crossing 10 on") demanded roughly 38 more seconds held at a lead
+of ~7s — structurally unwinnable, which is exactly what the LOOT_ESCAPE_AT
+sweep measured (lootKeptRate 0% at every threshold 11-16). The new
+mechanic's insight: hardening how *fast* the game reaches the 10th
+crossing should, if it worked, push the window's close later, which
+*shortens* the hold remaining before the clock's natural end (60 -
+(T10+10)) — turning an unwinnable open-ended survival demand into a short,
+bounded one. The brief asked to test this by sweeping `POLICE_PX`,
+`POLICE_HEAD_START_S`, and traffic density (a new `TRAFFIC_DENSITY`
+multiplier on lane spacing, added for exactly this sweep) against three
+targets, measured with the greedy bot (never escapes voluntarily, so
+reaching the window always lapses into 'committed' unless caught first —
+the right vehicle for all three metrics at once):
+
+| target | band |
+|---|---|
+| median seconds to the 10th crossing | 40-48s |
+| reach-10 rate | 45-55% |
+| conditional survival after commitment | 50-65% |
+
+**Result: no combination of the three requested knobs reaches all three
+targets — or even the first one. Median time-to-10th stayed clamped
+between ~17s and ~24s across the entire range swept, in both directions,
+individually and combined.** Full sweep (greedy bot, seeds 1..3000 per
+row; `secsToTenth` is the median over runs that reached it):
+
+*POLICE_PX (head start [5,7], density 1×):*
+
+| PX | reach-10 rate | median secsToTenth | cond. survival after commit |
+|---|---|---|---|
+| 4.0 (baseline) | 59.2% | 22.7s | 5.1% |
+| 4.3 | 53.2% | 22.3s | 3.2% |
+| 4.6 | 46.7% | 21.2s | 3.2% |
+| 5.0 | 40.4% | 20.6s | 2.0% |
+| 5.5 | 30.7% | 19.6s | 1.3% |
+| 6.0 | 22.9% | 17.9s | 0% |
+
+*POLICE_HEAD_START_S (PX 4.0, density 1×):*
+
+| head start | reach-10 rate | median secsToTenth | cond. survival after commit |
+|---|---|---|---|
+| [5,7] (baseline) | 58.6% | 22.9s | 3.2% |
+| [4,6] | 55.7% | 22.8s | 5.2% |
+| [3,5] | 48.6% | 21.8s | 4.2% |
+| [2,4] | 39.3% | 21.2s | 3.4% |
+| [1,3] | 30.0% | 20.4s | 3.1% |
+
+*TRAFFIC_DENSITY (PX 4.0, head start [5,7]):*
+
+| density | reach-10 rate | median secsToTenth | cond. survival after commit |
+|---|---|---|---|
+| 1.0 (baseline) | 59.7% | 22.9s | 5.4% |
+| 1.05 | 53.1% | 23.0s | 3.1% |
+| 1.08 | 48.9% | 23.0s | 1.2% |
+| 1.1 | 46.0% | 23.1s | 1.5% |
+| 1.15 | 42.9% | 23.4s | 1.4% |
+| 1.2 | 35.1% | 23.7s | 1.2% |
+| 1.3 | 23.2% | 22.9s | 0% |
+| 1.5 | 6.1% | 16.9s | 0% |
+| 1.75 | 2.0% | 16.3s | 0% |
+| 2.0 | 0.1% | 13.5s | — (0 committed runs) |
+
+*Combined points, checked in case stacking the three levers behaves
+differently than any one alone — it doesn't:*
+
+| PX | head start | density | reach-10 rate | median secsToTenth | cond. survival after commit |
+|---|---|---|---|---|---|
+| 3.0 | [7,9] | 0.85× (easier, sanity check) | 77.6% | 21.8s | 18.5% |
+| 4.3 | [4,6] | 1.1× (mild combined harden) | 36.2% | 21.8s | 2.2% |
+| 4.6 | [3,5] | 1.2× (moderate combined harden) | 16.3% | 19.3s | 0% |
+
+**Diagnosis.** These three knobs only change whether a run *survives* long
+enough to reach the 10th crossing (police catch risk, collision risk) —
+none of them change how fast the player's own forward progress *reaches*
+crossing 10 when nothing kills the run first. That pace is set by
+`buildWorld()`'s map generation (1-4 lanes rolled per section) and the hop
+cadence, neither of which these three constants touch. So hardening
+mostly kills off runs before the 10th rather than slowing down the ones
+that get there — which is why median secsToTenth barely moves, and if
+anything trends slightly *down* as difficulty rises (a survivorship
+effect: the runs still reaching 10 under harder settings are
+disproportionately the fast/lucky ones, not the median ones). The easier
+direction confirms the same decoupling from the other side: PX 3.0 / head
+start [7,9] / density 0.85× roughly triples the reach-10 rate (77.6% vs.
+59.7% baseline) while median secsToTenth barely changes (21.8s vs.
+22.9s). At every setting where reach-10 rate actually lands inside the
+45-55% band, median secsToTenth clusters at 21-23s regardless of which
+knob produced it — never above 24s, roughly half the 40-48s floor of the
+target band. And conditional survival after commit stays under ~5.5%
+almost everywhere in the target's neighborhood, because the post-commit
+hold is `60 - (T10 + 10)` ≈ 27-30s against the *same* pursuit pressure
+that was just tuned harder to (unsuccessfully) try to raise T10 in the
+first place — pushing these levers harder doesn't trade one target for
+another, it costs reach-rate and conditional-survival at the same time
+without buying anything on median secsToTenth.
+
+**No change shipped to `POLICE_PX`, `POLICE_HEAD_START_S`, or
+`TRAFFIC_DENSITY`** — they stay at their pre-sweep values (4.0, [5,7], 1×)
+rather than landing on a combination that clears none of the three
+targets. `TRAFFIC_DENSITY` itself (new this round) stays in the codebase
+at its neutral default (1× — reproduces the original spacing exactly) so
+it's available as a tested, working lever for whichever change actually
+addresses this. If the target band still matters, the lever that could
+plausibly move median secsToTenth is the one the brief didn't include in
+scope: `buildWorld()`'s own lane-count roll (currently 1-4 per section) or
+the base traffic scroll speed (`TRAFFIC_PX`) — either directly changes how
+long it takes to *complete* a crossing rather than how likely a run is to
+die before finishing one. Not touched here without direction to do so,
+consistent with this session's standing rule about map generation.
+
 ## Known-fixed issues
 
 - `buildMap` (the dormant `src/engine/`) could end on a live 'road' lane
