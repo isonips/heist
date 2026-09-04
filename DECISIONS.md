@@ -79,3 +79,25 @@ used both as a smarter bot and as an "is this seed even winnable" check) is
 reimplemented natively against the real data model in `src/harness/` for
 priority 2, rather than the original grid code being kept around unused.
 
+**The determinism test (`src/harness/determinism.ts`, `npm run
+test:determinism`) found a real bug on its first run** — not a false
+positive, an actual replay divergence, on ~85% of the first 200 seeds. Worth
+recording because it's exactly the kind of bug this priority exists to
+catch: `replay()` called `run.advance()` unconditionally after applying each
+tick's actions, but `src/harness/bot.ts`'s loop — the thing that produced the
+action log in the first place — calls `escapeNow()` and then `break`s
+*without* a further `advance()`. So any run that ended by escaping replayed
+one tick longer than it actually ran. Fixed by having `replay()` check
+`run.live()` after applying actions and stop there too, mirroring the source
+loop exactly. All 200 seeds replay identically after the fix. Endings by
+being caught or running out of time were never affected — `law()`/`clock()`
+already flip `mode` to a non-live value *inside* the `advance()` call that
+was going to happen anyway, so there's no asymmetric extra step for replay
+to introduce there.
+
+**Test vectors live in `test-vectors/heist-v1.json` (tracked in git), not
+`harness-out/`** (gitignored, regenerable scratch output from the existing
+calibration harness). These 20 fixtures are meant to outlive this session —
+a reference the future Solidity port can replay against — so they needed to
+actually be committed, not thrown away between runs.
+

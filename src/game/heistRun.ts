@@ -920,6 +920,11 @@ export function replay(seed: number, actions: ReplayInput[], paintingRoll: () =>
       else run.onKey(action)
       ai++
     }
+    // A bot/player that just escaped stops right there — the source loop
+    // this mirrors (src/harness/bot.ts) breaks immediately after
+    // escapeNow() without a further advance(). Calling advance() here
+    // regardless used to add one extra tick no live play ever took.
+    if (!run.live()) break
     run.advance()
   }
   return {

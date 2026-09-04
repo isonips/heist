@@ -6,7 +6,7 @@
 // heistRun.ts has no density/speedMul config surface (the prototype's world
 // is a fixed rule set, randomised per run via Math.random()), so there is no
 // grid to sweep — this runs many independent trials of that one rule set.
-import { ESCAPE_AT, HeistRun, REIN_FROM, TICK_MS, type Vehicle } from '@/game/heistRun'
+import { ESCAPE_AT, HeistRun, REIN_FROM, TICK_MS, resultOf, type ReplayInput, type Result, type Vehicle } from '@/game/heistRun'
 
 const MAX_TICKS = Math.ceil(65000 / TICK_MS) // hard stop past the 60s run clock, safety margin
 
@@ -55,10 +55,19 @@ export type BotTrialResult = {
   reinforcementFired: boolean
   leadAtSeventhS: number | null
   ticks: number
+  seed: number
+  actions: ReplayInput[]
+  result: Result
 }
 
-export function runBotTrial(): BotTrialResult {
-  const run = new HeistRun()
+/** seed is optional (the harness's usual bulk sweeps don't care), but always
+ *  present on the returned trial — every trial is a recorded, replayable
+ *  run, not just a statistic. paintingRoll defaults to "never" so a trial
+ *  never touches localStorage's shared drop counter from a headless
+ *  process; pass the real rollPaintingDrop explicitly if that's ever
+ *  actually wanted here. */
+export function runBotTrial(seed?: number, paintingRoll: () => boolean = () => false): BotTrialResult {
+  const run = new HeistRun(seed, paintingRoll)
   let leadAtSeventhS: number | null = null
   let ticks = 0
 
@@ -86,5 +95,8 @@ export function runBotTrial(): BotTrialResult {
     reinforcementFired: run.reinDone,
     leadAtSeventhS,
     ticks,
+    seed: run.seed,
+    actions: run.actionLog,
+    result: resultOf(run),
   }
 }

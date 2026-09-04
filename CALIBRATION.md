@@ -1,24 +1,22 @@
 # Calibration status
 
-## The harness now measures the live game
+## The harness measures the live game — which is now the only engine
 
 `src/harness/` drives `src/game/heistRun.ts` — the ported prototype that
-Play/Demo actually run — not `src/engine/`. Those are two separate tracks:
-
-- `src/engine/` + `src/render/pixel.ts`'s old siblings (removed) were a
-  from-scratch, seed-deterministic reimplementation built from
-  `heistcodebrief.md`'s abstract spec (integers only, no `Math.random`, a
-  fixed 13-column grid). Per the project owner's direction, the actual game
-  had to be a faithful port of the approved Claude Design prototype instead
-  — floats, `Math.random()`, continuous pixel positions — so `src/engine/`
-  and `src/harness/` were pointed at a ruleset nothing plays anymore.
-- `src/engine/` is left in place (still typechecks, still has its own solver
-  and reachability-constrained map generation) as the starting point for the
-  Solidity-portable rewrite the code brief describes for phase 3, but it is
-  currently dormant — no UI calls it.
+Play/Demo actually run, and, as of the determinism pass, the seeded engine
+too (see `DECISIONS.md` #1). There used to be a second, from-scratch
+seed-deterministic engine at `src/engine/`, built from `heistcodebrief.md`'s
+abstract spec (integers only, a fixed 13-column grid) — nothing ever
+imported it, and it modeled a different ruleset than what Play/Demo actually
+run. It's deleted now: `heistRun.ts` itself is seeded
+(`new HeistRun(seed)`, `run.actionLog`, `replay(seed, actions)`), so there's
+one engine, not two.
 
 Run it: `npx tsx src/harness/cli.ts <trials>` — writes
 `harness-out/live-summary.json` and `harness-out/live-trials.csv`.
+`npm run test:determinism` replays 200 seeds against their own recorded
+action logs and fails on any divergence; it also refreshes
+`test-vectors/heist-v1.json`.
 
 ## Police pacing retuned (playtesting: reached crossing 23 and was never once caught)
 

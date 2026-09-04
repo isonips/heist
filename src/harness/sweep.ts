@@ -54,9 +54,13 @@ export function runSweep(trials: number): { summary: SweepSummary; rows: BotTria
   return { summary, rows }
 }
 
+// actions/result are nested (an array, an object) — not CSV cells. seed is
+// scalar and useful in the CSV (lets a row be replayed later), so it stays.
+const CSV_SKIP = new Set(['actions', 'result'])
+
 export function toCsv(rows: BotTrialResult[]): string {
   if (rows.length === 0) return ''
-  const headers = Object.keys(rows[0]) as (keyof BotTrialResult)[]
+  const headers = (Object.keys(rows[0]) as (keyof BotTrialResult)[]).filter((h) => !CSV_SKIP.has(h))
   const lines = [headers.join(',')]
   for (const r of rows) lines.push(headers.map((h) => String(r[h])).join(','))
   return lines.join('\n')
