@@ -6,6 +6,20 @@
 // prototype is the approved reference and must not be redesigned.
 import { COPS, COP_W, ENV, HANDS as HAND_STATE, HELD, ICONS, PAL, POSES, VEHICLES } from '@/design/sprite-data'
 import { rollPaintingDrop } from './paintingStore'
+import { deriveStream, nextChance, nextFloat, nextInt, nextRange, shuffle, type RngState } from './rng'
+
+// Domain tags for deriveStream() — one independent RNG stream per gameplay
+// concern (DECISIONS.md #1). Values are arbitrary but must stay stable: a
+// stored replay's inputs are only reproducible against the domain split
+// that produced them.
+const STREAM = {
+  map: 1, // buildWorld()'s lane/truck/direction rolls, plus the police head start
+  traffic: 2, // buildWorld()'s per-lane phase offset
+  loot: 3, // rollLoot() + the wallet outcome/amount roll at pickup
+  items: 4, // rollItem()
+  furniture: 5, // rollFurniture()
+  presentation: 6, // drawBag() flavour-text pick — cosmetic, but still seeded so a replay reads identically, not just plays identically
+} as const
 
 export const SCALE = 3
 export const W = 226
@@ -77,14 +91,49 @@ export type AlertInfo = { text: string | null; level: number; critical: boolean 
 /** Fresh six-section world, tiled endlessly — see buildWorld() below. */
 export type LoggedInput = { tick: number; key: string; atMs: number }
 
+/** Every player-controllable action, in order, tagged with the tick it
+ *  landed on — the complete record replay(seed, actions) needs to reproduce
+ *  a run bit-for-bit. Movement reuses Dir; Escape/UseItem cover the other
+ *  two buttons a player can press. */
+export type ReplayAction = Dir | 'Escape' | 'UseItem'
+export type ReplayInput = [tick: number, action: ReplayAction]
+
+export type Result = {
+  mode: Mode
+  outcome: RunState['outcome']
+  crossed: number
+  lives: number
+  hands: Hands
+  ticks: number
+  walletOutcome: RunState['walletOutcome']
+  walletAmount: number
+  heldItem: ItemKey | null
+}
+
 export class HeistRun {
   state: RunState = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, outcome: 'collared', heldItem: null, walletOutcome: null, walletAmount: 0 }
-  // No seed here — this is the ported prototype's Math.random() world, not
-  // the seed-deterministic engine (see CALIBRATION.md). runId identifies a
-  // run for telemetry/export purposes only, not for replay.
+  // The seed this run's world and every roll in it derive from — see
+  // DECISIONS.md #1. Passed explicitly for a replay; otherwise picked here
+  // so ordinary play still gets a fresh, recorded, verifiable world.
+  seed: number
+  private mapRng: RngState = 0
+  private trafficRng: RngState = 0
+  private lootRng: RngState = 0
+  private itemRng: RngState = 0
+  private furnRng: RngState = 0
+  private presentationRng: RngState = 0
+  // The painting drop is a stand-in for a global, cross-player counter (see
+  // paintingStore.ts) — state that lives outside any single run's seed, so
+  // it can't be folded into a domain stream without breaking that counter's
+  // own contract. Injected so replay()/tests can pin it instead of touching
+  // shared localStorage.
+  private paintingRoll: () => boolean
+  // runId identifies a run for telemetry/export purposes only, not for
+  // replay — the seed is what makes a run reproducible.
   runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
   startedAtMs = Date.now()
   inputLog: LoggedInput[] = []
+  actionLog: ReplayInput[] = []
   tick = 0
   bands: Band[] = []
   world = 0
@@ -120,7 +169,12 @@ export class HeistRun {
   private alertBags: Record<string, string[]> = {}
   private ac: AudioContext | null | undefined
 
-  constructor() {
+  constructor(seed?: number, paintingRoll: () => boolean = rollPaintingDrop) {
+    // >>> 0 folds a negative/float/out-of-range caller value into a valid
+    // uint32 the same way rngFromSeed does, so this.seed always matches what
+    // the domain streams were actually derived from.
+    this.seed = seed !== undefined ? seed >>> 0 : (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0
+    this.paintingRoll = paintingRoll
     this.newRun()
   }
 
@@ -215,19 +269,27 @@ export class HeistRun {
   private buildWorld(): void {
     const out: Band[] = [{ k: 'pave', h: 28, bottom: 0, top: 0 }]
     for (let s = 0; s < 6; s++) {
-      const lanes = 1 + Math.floor(Math.random() * 4)
-      const truckAt = Math.random() < 0.45 ? Math.floor(Math.random() * lanes) : -1
-      const d0 = Math.random() < 0.5 ? 1 : -1
+      let lanes: number
+      ;[lanes, this.mapRng] = nextRange(this.mapRng, 1, 4)
+      let truckRoll: boolean
+      ;[truckRoll, this.mapRng] = nextChance(this.mapRng, 0.45)
+      let truckAt = -1
+      if (truckRoll) { [truckAt, this.mapRng] = nextInt(this.mapRng, lanes) }
+      let dirRoll: boolean
+      ;[dirRoll, this.mapRng] = nextChance(this.mapRng, 0.5)
+      const d0 = dirRoll ? 1 : -1
       const wider = 1 + 0.1 * (lanes - 1)
       for (let n = 0; n < lanes; n++) {
         const isTruck = n === truckAt
         const spacing = Math.round((isTruck ? SPACING.truck : SPACING.car) * wider)
+        let phase: number
+        ;[phase, this.trafficRng] = nextRange(this.trafficRng, 0, spacing)
         out.push({
           k: isTruck ? 'truck' : 'car',
           h: isTruck ? 32 : 24,
           dir: n % 2 === 0 ? d0 : -d0,
           spacing,
-          phase: Math.round(Math.random() * spacing),
+          phase,
           bottom: 0,
           top: 0,
         })
@@ -241,6 +303,15 @@ export class HeistRun {
   }
 
   newRun(): void {
+    // Every domain gets an independent stream derived fresh from the seed —
+    // calling newRun() again on the same instance (as the determinism test
+    // does) reproduces the exact same world and rolls, every time.
+    this.mapRng = deriveStream(this.seed, STREAM.map)
+    this.trafficRng = deriveStream(this.seed, STREAM.traffic)
+    this.lootRng = deriveStream(this.seed, STREAM.loot)
+    this.itemRng = deriveStream(this.seed, STREAM.items)
+    this.furnRng = deriveStream(this.seed, STREAM.furniture)
+    this.presentationRng = deriveStream(this.seed, STREAM.presentation)
     this.buildWorld()
     this.rollLoot()
     this.rollItem()
@@ -259,7 +330,9 @@ export class HeistRun {
     this.alertMsg = null
     this.alertLevel = -1
     this.critical = false
-    const head = POLICE_HEAD_START_S[0] + Math.random() * (POLICE_HEAD_START_S[1] - POLICE_HEAD_START_S[0])
+    let headFrac: number
+    ;[headFrac, this.mapRng] = nextFloat(this.mapRng)
+    const head = POLICE_HEAD_START_S[0] + headFrac * (POLICE_HEAD_START_S[1] - POLICE_HEAD_START_S[0])
     this.headStart = head
     this.policeWy = this.bands[0].bottom - (head * (POLICE_PX * 1000 / TICK_MS) + 26)
     this.hopTo = null
@@ -270,6 +343,8 @@ export class HeistRun {
     this.ms = 0
     this.lostAt = -1
     this.tick = 0
+    this.inputLog = []
+    this.actionLog = []
     this.state = { mode: 'run', hands: 'ticket', crossed: 0, taken: {}, lives: 3, blink: 0, timeLeft: 60, outcome: 'collared', heldItem: null, walletOutcome: null, walletAmount: 0 }
   }
 
@@ -279,13 +354,21 @@ export class HeistRun {
   private rollLoot(): void {
     const stops = this.bands.map((b, i) => (b.k === 'stop' ? i : -1)).filter((i) => i >= 0)
     const plan: Record<number, string> = {}
-    if (Math.random() < 0.55 && stops.length) {
-      const idx = stops.splice(Math.floor(Math.random() * stops.length), 1)[0]
+    let walletRoll: boolean
+    ;[walletRoll, this.lootRng] = nextChance(this.lootRng, 0.55)
+    if (walletRoll && stops.length) {
+      let pick: number
+      ;[pick, this.lootRng] = nextInt(this.lootRng, stops.length)
+      const idx = stops.splice(pick, 1)[0]
       plan[idx] = 'wallet'
     }
     // The painting is the NFT drop — rare on purpose, see paintingStore.ts.
-    if (stops.length && rollPaintingDrop()) {
-      const idx = stops.splice(Math.floor(Math.random() * stops.length), 1)[0]
+    // Its own odds live outside this run's seed (a cross-run counter), so
+    // this draw doesn't touch lootRng — see the paintingRoll field.
+    if (stops.length && this.paintingRoll()) {
+      let pick: number
+      ;[pick, this.lootRng] = nextInt(this.lootRng, stops.length)
+      const idx = stops.splice(pick, 1)[0]
       plan[idx] = 'painting'
     }
     this.lootPlan = plan
@@ -303,9 +386,12 @@ export class HeistRun {
     const pool = preferred.length ? preferred : stops
     for (let k = ITEM_ORDER.length - 1; k >= 0; k--) {
       const item = ITEM_ORDER[k]
-      if (Math.random() < ITEM_ODDS[item]) {
-        const index = pool[Math.floor(Math.random() * pool.length)]
-        this.itemPlan = { index, item }
+      let hit: boolean
+      ;[hit, this.itemRng] = nextChance(this.itemRng, ITEM_ODDS[item])
+      if (hit) {
+        let pick: number
+        ;[pick, this.itemRng] = nextInt(this.itemRng, pool.length)
+        this.itemPlan = { index: pool[pick], item }
         return
       }
     }
@@ -318,14 +404,21 @@ export class HeistRun {
     this.bands.forEach((band, i) => {
       if (band.k !== 'pave' && band.k !== 'stop') return
       const list: { kind: string; x: number }[] = []
-      const slots = [4, 58, 112, 164].sort(() => Math.random() - 0.5)
-      const count = band.k === 'stop' ? 1 : (Math.random() < 0.65 ? 2 : 1)
+      let slots: number[]
+      ;[slots, this.furnRng] = shuffle(this.furnRng, [4, 58, 112, 164])
+      let countRoll: boolean
+      ;[countRoll, this.furnRng] = nextChance(this.furnRng, 0.65)
+      const count = band.k === 'stop' ? 1 : (countRoll ? 2 : 1)
       for (let s = 0; s < count; s++) {
-        let kind = KINDS[Math.floor(Math.random() * KINDS.length)]
+        let kindIdx: number
+        ;[kindIdx, this.furnRng] = nextInt(this.furnRng, KINDS.length)
+        let kind = KINDS[kindIdx]
         if (band.k === 'stop' && kind === 'busStop') kind = 'bin'
         const art = ENV[kind as keyof typeof ENV]
         if (art.h > band.h + 8) continue
-        const x = slots[s] + Math.floor(Math.random() * 14)
+        let xOff: number
+        ;[xOff, this.furnRng] = nextInt(this.furnRng, 14)
+        const x = slots[s] + xOff
         if (x + art.w > W - 2) continue
         if (band.k === 'stop') {
           const sx = this.stopX(i)
@@ -364,9 +457,12 @@ export class HeistRun {
       let { walletOutcome, walletAmount } = this.state
       if (loot === 'wallet') {
         // Rolled now, revealed only at the end of the run.
-        const roll = Math.random()
+        let roll: number
+        ;[roll, this.lootRng] = nextFloat(this.lootRng)
         walletOutcome = roll < 0.45 ? 'nothing' : roll < 0.88 ? 'refund' : 'double'
-        walletAmount = 10 + Math.floor(Math.random() * 41) // 10-50, nominal points
+        let amountRoll: number
+        ;[amountRoll, this.lootRng] = nextInt(this.lootRng, 41)
+        walletAmount = 10 + amountRoll // 10-50, nominal points
       }
       this.state = { ...this.state, taken, hands, walletOutcome, walletAmount }
     }
@@ -395,6 +491,7 @@ export class HeistRun {
     // freeze or raise the cap of (see MyHaulTab). Still collectible.
     this.itemEffectBanner = { item, untilTick: this.tick + Math.round(1800 / TICK_MS) }
     this.usedItemsThisRun.push(item)
+    this.actionLog.push([this.tick, 'UseItem'])
     this.state = { ...this.state, heldItem: null }
   }
 
@@ -442,6 +539,7 @@ export class HeistRun {
     // Recorded even when the move below turns out to be a no-op (e.g. mid-hop) —
     // per the code brief, an input is logged whether or not it changes anything.
     this.inputLog.push({ tick: this.tick, key, atMs: Date.now() - this.startedAtMs })
+    this.actionLog.push([this.tick, key as Dir])
     if (key === 'ArrowLeft') { this.tx = Math.max(2, this.tx - 6); return }
     if (key === 'ArrowRight') { this.tx = Math.min(W - 24, this.tx + 6); return }
     if (this.hopTo !== null) return
@@ -463,6 +561,7 @@ export class HeistRun {
   escapeNow(): void {
     if (this.state.crossed >= ESCAPE_AT && this.live()) {
       this.usedItemsThisRun = []
+      this.actionLog.push([this.tick, 'Escape'])
       this.state = { ...this.state, mode: 'paid', taken: {}, hands: 'ticket', heldItem: null, walletOutcome: null, walletAmount: 0 }
     }
   }
@@ -574,7 +673,9 @@ export class HeistRun {
     }
     if (!this.alertBags[band] || !this.alertBags[band].length) this.alertBags[band] = ALERTS[band].slice()
     const bag = this.alertBags[band]
-    return bag.splice(Math.floor(Math.random() * bag.length), 1)[0]
+    let pick: number
+    ;[pick, this.presentationRng] = nextInt(this.presentationRng, bag.length)
+    return bag.splice(pick, 1)[0]
   }
 
   private alerts(): void {
@@ -797,5 +898,55 @@ export class HeistRun {
         ctx.fillRect(x, y, 1, 1)
       }
     }
+  }
+}
+
+const MAX_REPLAY_TICKS = Math.ceil(65000 / TICK_MS) // hard stop past the 60s run clock, safety margin — matches the harness bot
+
+/** Pure, DOM-free replay: same seed and the same recorded actions always
+ *  reach the same Result. No canvas, no audio, no localStorage — this is
+ *  what the determinism test and any future server-side verification call.
+ *  `paintingRoll` defaults to false (never drops) because the real one
+ *  reads/writes a shared localStorage counter that has no meaning outside a
+ *  browser and no place in a pure function — see DECISIONS.md #1. */
+export function replay(seed: number, actions: ReplayInput[], paintingRoll: () => boolean = () => false): Result {
+  const run = new HeistRun(seed, paintingRoll)
+  let ai = 0
+  for (let t = 0; t < MAX_REPLAY_TICKS && run.live(); t++) {
+    while (ai < actions.length && actions[ai][0] === run.tick) {
+      const [, action] = actions[ai]
+      if (action === 'Escape') run.escapeNow()
+      else if (action === 'UseItem') run.useItem()
+      else run.onKey(action)
+      ai++
+    }
+    run.advance()
+  }
+  return {
+    mode: run.state.mode,
+    outcome: run.state.outcome,
+    crossed: run.state.crossed,
+    lives: run.lives(),
+    hands: run.state.hands,
+    ticks: run.tick,
+    walletOutcome: run.state.walletOutcome,
+    walletAmount: run.state.walletAmount,
+    heldItem: run.state.heldItem,
+  }
+}
+
+/** The same summary shape replay() returns, read off a live/finished run —
+ *  so a bot trial and a replay of that same trial can be compared directly. */
+export function resultOf(run: HeistRun): Result {
+  return {
+    mode: run.state.mode,
+    outcome: run.state.outcome,
+    crossed: run.state.crossed,
+    lives: run.lives(),
+    hands: run.state.hands,
+    ticks: run.tick,
+    walletOutcome: run.state.walletOutcome,
+    walletAmount: run.state.walletAmount,
+    heldItem: run.state.heldItem,
   }
 }
