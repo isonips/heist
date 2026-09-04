@@ -1,134 +1,149 @@
 # Session summary
 
-Working session on the brief: one seeded engine (no more `src/engine/`
-dead code), a difficulty/RNG measurement pass, reinforcement retuned,
-address-based identity, `/embed`, and a splash screen. All six priorities
-in the brief got real work; none were skipped. Details and reasoning for
-every non-obvious call are in `DECISIONS.md`, organized by the same six
-numbered sections as below. Tuning history and every measured number is in
-`CALIBRATION.md`.
+Two working sessions on the same brief, continued in one file. First pass:
+one seeded engine (`src/engine/` dead code deleted), a difficulty/RNG
+measurement pass, reinforcement retuned, address-based identity (stubbed),
+`/embed`, a splash screen. Second pass (this one): two of the first pass's
+metric targets confirmed invalid and dropped, a third bot answering "is the
+loot actually playable" (P0), and a real backend (Supabase) for profile/
+stats/feed/global drop counters (P1, P2). Details and reasoning for every
+non-obvious call are in `DECISIONS.md`; tuning history and every measured
+number is in `CALIBRATION.md`.
 
-Every commit in this session builds, typechecks, and lints clean
+Every commit in both sessions builds, typechecks, and lints clean
 (`npx tsc --noEmit`, `npx eslint src --max-warnings=0`, `npm run build`) —
 checked before each one, not just at the end.
 
-## 1. Determinism — done
+## Determinism — done (session 1)
 
 - `HeistRun` takes an optional `seed`; every `Math.random()` in the sim path
-  (world generation, loot, mystery items, furniture, the wallet roll, even
-  the cosmetic alert-text picker) now draws from one of six independent
-  seeded streams (`DECISIONS.md #1`), so extending one domain never shifts
-  another.
-- Every player action (move/escape/use-item) is logged as `[tick, action]`
-  in `run.actionLog`. `replay(seed, actions) -> Result` is pure and DOM-free.
-- `npm run test:determinism` plays 200 seeds, replays each, and failed on
-  its first real run — a genuine bug (`replay()` advancing one tick past
-  where the source bot loop stopped after an escape). Fixed; all 200 seeds
-  replay identically now. 20 of those are committed at
-  `test-vectors/heist-v1.json` as a reference for a future Solidity port.
-- `src/engine/` (the abandoned grid-based track, nothing ever imported it)
-  is deleted outright, not left dormant. Its one reusable file, `rng.ts`,
-  moved to `src/game/rng.ts`.
+  now draws from one of six independent seeded streams (`DECISIONS.md #1`).
+- Every player action is logged (`run.actionLog`); `replay(seed, actions)`
+  is pure and DOM-free. `npm run test:determinism` plays 200 seeds, replays
+  each, and caught a genuine bug on its first run (fixed) — all 200 now
+  replay identically. 20 are committed at `test-vectors/heist-v1.json` for
+  a future Solidity port.
+- `src/engine/` (the abandoned grid-based track) deleted outright.
 
-## 2. Measurement — done, two targets not chased
+## Measurement — two targets dropped, one new finding (sessions 1 + 2)
 
-- `src/harness/greedyBot.ts` (never escapes at 10, detours for loot, plays
-  to its natural end) makes `relativeGap` measurable for the first time —
-  it was structurally 0 before (the old bot always stopped at exactly 10).
-- `src/harness/solver.ts` computes `impossibleShare` by replaying the real
-  `buildWorld()`/traffic logic with collisions and the police catch both
-  switched off (`HeistRun`'s new `invincible` flag).
-- Measured: `relativeGap` 1.40 (target < 0.06), `impossibleShare` 4.2%
-  (target 30-35%), `lootPickupRate` 68.8%. The first two are far from their
-  targets and I did not force-tune either — full reasoning in
-  `CALIBRATION.md`'s measurement section and `DECISIONS.md #2`. Short
-  version: closing `relativeGap` looks like it would need a different
-  hazard model, not a parameter; closing `impossibleShare` would mean
-  redesigning map generation so roughly a third of maps are unwinnable by
-  anyone — a real design decision, not a calibration nudge, and the brief's
-  explicit "you decide, tune it" mandate was scoped to reinforcement (item
-  3), not this. **This is the one open item most worth the project owner's
-  own look** — see "What's next" below.
+- **`relativeGap`: removed from the harness entirely**, confirmed
+  structurally invalid rather than just hard to hit — for a
+  constant-per-tick-hazard policy, p95/median = ln(0.05)/ln(0.50) ≈ 4.32 as
+  a matter of math, independent of tuning. The 0.06 target came from the
+  abandoned grid engine's binary reachability model.
+- **`impossibleShare`: confirmed correct at 4.2%, `buildWorld()`
+  untouched.** The ceiling against scripted play is already supplied by
+  police pressure (`successRate` 60-61%, in the target band the
+  reinforcement retune aimed at) — pushing a third of maps into
+  unwinnable-by-anyone would be worse, not better.
+- **P0, new this session: is the loot actually playable?**
+  `src/harness/rationalBot.ts` plays to maximize expected value — seeks
+  loot, then re-evaluates every tick after crossing 10 whether to escape
+  (lock the ticket) or hold (risk it to bank loot too), using the game's
+  own alert-tier boundary as the "still safe" threshold. **Result:
+  `lootKeptRate` is 0% at 1000 trials, robust across the game's entire
+  alert-threshold range (3.4s–13s tested).** Median lead is already ~7s by
+  crossing 10 — below every threshold tested — so "armed" and "comfortably
+  safe" never coincide; the rational move is always to escape immediately.
+  No changes made in response, per instruction — reported as a design
+  finding. **This is the one item most worth the project owner's own
+  look**, more than the two dropped metrics above.
 
-## 3. Reinforcement — done
+## Reinforcement — done (session 1)
 
-`REIN_LEAD_S` 20 → 11. Trigger rate was 0% (measured, not assumed) at 2000
-trials; now 16-17% across three separate sample runs at 3000-5000 trials
-each, inside the 15-25% target. `successRate` cost was modest (64.8% →
-~60-61%), `medianCrossings` unchanged at 10. Full sweep table in
-`CALIBRATION.md`.
+`REIN_LEAD_S` 20 → 11. Trigger rate 0% (measured) → 16-17% across three
+sample runs, inside the 15-25% target. `successRate` cost modest
+(64.8% → ~60-61%), `medianCrossings` unchanged at 10.
 
-## 4. Identity — done, one path real, one stubbed
+## Identity — real path + stub (session 1), now backed by a real store (session 2)
 
-`src/game/identity.ts`: `connectInjected()` is a real, working EIP-1193
-wallet connection (no API key needed). `connectPrivy()` is a stub — no app
-ID configured in this environment — with the identical `Identity` shape, so
-swapping in the real SDK later touches one function body, not any call
-site. `profile.ts` now scopes every stat/username/ticket read-write to the
-connected address (or an anonymous guest bucket otherwise), with
-`reconcileIdentity()` implementing the actual policy a real backend will
-also need (returning address's record wins; first connect claims guest
-progress once). No real backend was stood up — `localStorage` keyed by
-address stands in for it, deliberately, per the session's own instruction
-to stub missing external access rather than build it. `DECISIONS.md #4`.
+`src/game/identity.ts`: `connectInjected()` is real (any EIP-1193 wallet,
+no API key). `connectPrivy()` is a documented stub (no app ID configured).
+`profile.ts` now writes through to Supabase (see Backend below) instead of
+`localStorage` alone.
 
-## 5. `/embed` — done
+## `/embed` — done (session 1), reads real data now (session 2)
 
-300px, transparent body, no window chrome, no game board, up to 8 entries
-each on its own dark plate — reusing the real feed's own `lines.ts`/
-`feedBus.ts` machinery, not a parallel rendering path. Content is synthetic
-(client-generated plausible activity) because there's no shared backend
-feed to pull real cross-visitor events from yet — flagged clearly in the
-page's own comments and `DECISIONS.md #5` so it isn't mistaken for real
-data later.
+300px, transparent, no chrome, up to 8 entries each on its own dark plate.
+Was synthetic client-generated activity in session 1; now polls real
+`feed_events` rows from Supabase when configured, falling back to the
+original synthetic generator only when it isn't (never mixed).
 
-## 6. Splash + README — done
+## Splash + README — done (session 1)
 
-Three-line splash (`CROSS TEN ROADS` / `THE COPS ARE BEHIND YOU` / `GRAB
-WHAT YOU CAN`), shown once per browser via a `localStorage` flag,
-auto-dismisses after 3s, skippable by click/tap/any key. README.md replaced
-entirely — was still the unedited `create-next-app` boilerplate; now
-describes the actual project, the seeded engine, the harness/calibration
-workflow, and what's real vs. stubbed in identity/`/embed`.
+Three-line splash, once per browser, 3s auto-dismiss, skippable.
+README.md replaced entirely; updated again this session for the backend.
 
-## What's next (not started, or deliberately left open)
+## Backend (Supabase) — new this session, P1 + P2
 
-- **`impossibleShare`/`relativeGap` gap** (see #2 above) — needs a design
-  decision from the project owner, not another tuning pass. If the 30-35%
-  `impossibleShare` target is truly wanted, `buildWorld()`'s lane-count
-  distribution needs to occasionally roll much harder traffic than its
-  current uniform 1-4 lanes; that's a bigger, riskier change than anything
-  else in this session and deserves explicit sign-off given it means some
-  maps become unwinnable regardless of skill.
-- **Privy** — needs `NEXT_PUBLIC_PRIVY_APP_ID` (or equivalent) added to the
-  Vercel project's environment variables, then `connectPrivy()` in
-  `src/game/identity.ts` gets its real implementation swapped in.
-- **A real backend** — everything currently standing in for "the server"
-  (profile/stats storage, the painting/mystery-item global counters, the
-  `/embed` feed) is `localStorage` or client-only. The shapes are all
-  written to make that swap contained (see `DECISIONS.md #2, #4, #5`), but
-  none of it is provisioned — no database was created in this session,
-  intentionally, since that's real infrastructure with a cost and a
-  security surface that isn't mine to stand up without the owner present.
-- **On-chain ledger / Solidity port** — explicitly out of scope for this
-  session (per the original brief's phase-3 framing across the whole
-  project). `test-vectors/heist-v1.json` exists specifically so that work
-  has something to check itself against when it starts.
-- Minor: re-running `npm run test:determinism` regenerates
-  `test-vectors/heist-v1.json` with a *different* (still internally
-  consistent) set of recorded actions each time, because the harness bot's
-  own left/right tie-break uses an unseeded coin flip (deliberately — it's
-  an external "player" policy choice, not engine state, so it was never
-  folded into the engine's seeded streams). Harmless — the file it produces
-  is always a valid, replayable fixture set — but worth knowing before
-  wondering why that file shows a diff after just running the test.
+- New dedicated Supabase project ("heist", `wzljvpoqgszhyfaquilm`, free
+  tier) — not either of the two unrelated existing projects in the same
+  org. 5 tables, address as the primary key throughout, RLS on all of them.
+- **P1**: `profile.ts`/`feedBus.ts` push to Supabase fire-and-forget on
+  every write; `localStorage` stays the synchronous read path everywhere.
+  `reconcileIdentity()` (at wallet-connect time) is the one async path and
+  is where "server authoritative" is actually enforced. `FeedWindow`/
+  `/embed` poll `feed_events` for real cross-player activity.
+- **P2**: `global_drop_counters` replaces the mystery items' old per-run
+  independent roll with one global counter per drop type (painting + 5
+  items), advanced only through a `security definer` RPC — the table has
+  no client write policy at all, so this is genuinely hardened, not just
+  moved. `HeistRun` gained an optional `itemRoll` param so this resolves
+  via one `Promise.all` *before* construction — the engine itself stays
+  100% synchronous, which `replay()`/the determinism harness depend on.
+  DEMO never touches the shared counters (stakes:false).
+- **Verified**: schema and the RPC, directly via the Supabase MCP tools
+  (`apply_migration`, `execute_sql` round-tripped `roll_global_drop()`).
+- **Not verified**: a real browser successfully writing to Supabase. This
+  sandbox's egress proxy rejects the project's host outright ("Host not in
+  allowlist"), confirmed from both a Playwright browser and plain Node —
+  the Supabase MCP tool reaches the same project fine, evidently through a
+  separate privileged channel. What *was* confirmed under that failure:
+  graceful degradation held (`buildRun()` still resolves, a run still
+  starts) when the network call fails. **Needs one real smoke test
+  somewhere with normal internet access** — the deployed Vercel app, or a
+  future session without this sandbox's allowlist — before fully trusting
+  the write path.
+- **Not set: Vercel environment variables.** `NEXT_PUBLIC_SUPABASE_URL` /
+  `NEXT_PUBLIC_SUPABASE_ANON_KEY` are in `.env.example` and were set in
+  this session's own local `.env.local` (gitignored) to verify the build,
+  but no tool available in this session can write Vercel's project env
+  vars. **The deployed app will run in guest-only/local-storage-only mode,
+  exactly like before this session, until someone adds those two values in
+  the Vercel dashboard.** This is the most actionable single remaining
+  step — everything else in P1/P2 is done and waiting on it.
+
+## What's next
+
+1. **Add the two Supabase env vars to the Vercel project** (see above) —
+   the actual unblocking step for everything in P1/P2 to go live.
+2. **Do one real smoke test against the live Supabase project** once the
+   env vars are set (play a run, connect a wallet, confirm rows land in
+   `profiles`/`stats`/`global_drop_counters`) — this sandbox couldn't do it
+   (network policy), but a normal browser hitting the deployed app can.
+3. **P0's finding (`lootKeptRate` 0%) is a design decision waiting on the
+   project owner** — not a bug, not something I tuned around. Full
+   reasoning and the threshold sensitivity table: `CALIBRATION.md`'s "P0"
+   section, `DECISIONS.md`'s P0 entry.
+4. **Privy** — needs `NEXT_PUBLIC_PRIVY_APP_ID`, then `connectPrivy()` in
+   `identity.ts` gets its real implementation.
+5. **On-chain ledger / Solidity port** — still out of scope; the
+   determinism work and `test-vectors/heist-v1.json` exist so that work has
+   something to check itself against when it starts.
+6. Minor: `npm run test:determinism` regenerates `test-vectors/heist-v1.json`
+   with different (still valid) recorded actions each run, because the
+   harness bot's own left/right tie-break is an unseeded coin flip
+   (deliberately — it's the bot's policy, not engine state).
 
 ## Blockers hit (all resolved or stubbed, none silently skipped)
 
-- No Privy credentials → stubbed (`identity.ts`), documented, moved on.
-- No database/backend → stubbed (localStorage stands in throughout),
-  documented, moved on.
+- No Privy credentials → stubbed (`identity.ts`), documented.
 - No test framework installed → used the project's existing `tsx`-script
-  harness pattern instead of adding vitest/jest for one test file; a
-  deliberate scope call, in `DECISIONS.md`'s style even though it didn't
-  get its own numbered entry (it's a tooling choice, not a gameplay one).
+  harness pattern rather than adding vitest/jest for one test file.
+- No way to write Vercel env vars from this session → documented as the
+  top "what's next" item instead of silently leaving it unmentioned.
+- This sandbox's network policy blocks the Supabase project host →
+  verified everything reachable from here (schema, RPC) directly via the
+  Supabase MCP tools instead, and documented the one thing that still
+  needs a real-network smoke test.
