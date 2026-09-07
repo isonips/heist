@@ -1486,3 +1486,51 @@ this sandbox cannot fetch itself. Asked for it; proceeding with other
 work in parallel rather than blocking on it, since this fix is a real
 improvement regardless of whether it was the actual cause.
 
+**Deploy fix was right — the real cause was `CRON_SECRET` having leading/
+trailing whitespace in its Vercel value**, per the actual build log the
+user pasted after this fix landed (`vercel build` validates cron-header
+env vars and refuses a value with whitespace outright, unrelated to
+Privy). The Privy mounted-gate fix above stays — it's still a real
+improvement, just not what broke this particular deploy.
+
+## First real smoke test: two live bugs found and fixed
+
+**"Sign-in failed: Could not read your Privy identity token" — on a
+*wallet* login (signature), not email.** The previous round's fix
+(`AuthSync.tsx` waiting for `user.wallet` before syncing) targeted a
+real but different race — email's embedded-wallet creation lag. This
+one showed up even with a wallet already attached at auth time, meaning
+`getIdentityToken()` itself can return null for a beat right after
+`authenticated` flips true, independent of the wallet-readiness race.
+Fixed by retrying the token fetch with backoff (`TOKEN_RETRY_DELAYS_MS`,
+~8.7s total) before giving up, and — the more important part — giving
+the error banner an actual RETRY button that re-runs the whole exchange.
+Before this, a failure here was a dead end: nothing re-triggered the
+effect (its dependency array never changed), so a stuck session required
+a hard reload.
+
+**"Puis on ne peut rien faire dans play/profile/draw" — a second,
+compounding bug.** PLAY/PROFILE's gates called Privy's `login()`
+whenever `!getIdentity()`, without checking whether Privy already
+considered the session `authenticated`. Once the token-read above
+failed, the player *was* authenticated with Privy but had no local
+identity — clicking PLAY or the PROFILE tab called `login()` again,
+which has nothing left to do when already authenticated and, from the
+player's side, just did nothing. Fixed by checking `authenticated`
+first: if true, don't call `login()` again — show a short "finishing
+sign-in" message instead and let `onIdentityChange` pick it up the
+moment `AuthSync` actually lands a session (now far more likely to,
+given the retry fix above; the manual RETRY button is the fallback if
+it still doesn't). Applied consistently in `HeistGame.tsx` (PLAY +
+RUN AGAIN), `page.tsx` (the PROFILE tab switch), and `ProfileTab.tsx`
+(the CONNECT button itself).
+
+**Neither bug could have been caught by this sandbox's own build/lint/
+typecheck/determinism suite** — both are runtime races against Privy's
+real client-side SDK, only observable with a real login. This is
+exactly the category of thing the standing "verify live, not just read"
+discipline exists for; this sandbox still can't do that itself, so the
+first real click-through remains the only way these surface. Worth
+treating every "it doesn't work" report from here on as a likely real
+bug report, not user error, given the track record so far (two for two).
+

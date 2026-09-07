@@ -92,7 +92,7 @@ export default function HeistGame() {
   // (AuthSync.tsx does the real Privy->session exchange, elsewhere —
   // this component just waits for its result via onIdentityChange), so a
   // player never has to click PLAY twice.
-  const { login } = usePrivy()
+  const { login, authenticated } = usePrivy()
   const pendingPlayRef = useRef(false)
   // The signed ticket /api/play/start issued for the run currently in
   // runRef — carried through to /api/play/finish at the end (see
@@ -127,7 +127,16 @@ export default function HeistGame() {
   const startMode = useCallback(async (m: 'play' | 'demo') => {
     if (m === 'play' && !getIdentity()) {
       pendingPlayRef.current = true
-      login()
+      if (authenticated) {
+        // Already logged in with Privy but AuthSync hasn't landed a
+        // session yet (still syncing, or retrying after a hiccup — see
+        // AuthSync.tsx) — calling login() again here would be a no-op
+        // at best, confusing at worst (Privy has nothing new to do).
+        // onIdentityChange picks this up the moment it actually lands.
+        setStartError('Finishing sign-in… this takes a few seconds. If it hangs, check the banner at the bottom of the screen.')
+      } else {
+        login()
+      }
       return
     }
     setMode(m)
@@ -142,7 +151,7 @@ export default function HeistGame() {
       setHud(snapshot(run))
     }
     setReady(true)
-  }, [login, buildPlayRun])
+  }, [login, authenticated, buildPlayRun])
 
   useEffect(() => onIdentityChange((id) => {
     if (id && pendingPlayRef.current) {
@@ -156,7 +165,11 @@ export default function HeistGame() {
       // Disconnected mid-session (e.g. via the PROFILE tab) — same gate
       // as a fresh PLAY, not a silent continue.
       pendingPlayRef.current = true
-      login()
+      if (authenticated) {
+        setStartError('Finishing sign-in… this takes a few seconds. If it hangs, check the banner at the bottom of the screen.')
+      } else {
+        login()
+      }
       return
     }
     setReady(false)
@@ -170,7 +183,7 @@ export default function HeistGame() {
       if (!ok) { setMode(null); setReady(true); return }
     }
     setReady(true)
-  }, [demo, login, buildPlayRun])
+  }, [demo, login, authenticated, buildPlayRun])
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {

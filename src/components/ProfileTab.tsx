@@ -14,7 +14,7 @@ const FEED = theme.type.size.feed
 const row = { display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${pal.chrome}` } as const
 
 export default function ProfileTab() {
-  const { ready, login } = usePrivy()
+  const { ready, login, authenticated } = usePrivy()
   const { logout: privyLogout } = useLogout()
 
   const [name, setName] = useState('')
@@ -131,9 +131,16 @@ export default function ProfileTab() {
         </div>
       ) : (
         <>
-          <button onClick={() => login()} disabled={!ready} style={{ ...buttonStyle, opacity: !ready ? 0.5 : 1 }}>
-            CONNECT
-          </button>
+          {authenticated ? (
+            <p style={{ color: pal.concrete, fontSize: FEED, margin: 0 }}>
+              Finishing sign-in… if this doesn&apos;t resolve in a few seconds, check the banner at the
+              bottom of the screen.
+            </p>
+          ) : (
+            <button onClick={() => login()} disabled={!ready} style={{ ...buttonStyle, opacity: !ready ? 0.5 : 1 }}>
+              CONNECT
+            </button>
+          )}
           <p style={{ color: pal.concrete, fontSize: FEED, marginTop: 4 }}>
             Email or wallet — either way you get one address. PLAY, tickets, bonus and loot all need
             this; DEMO doesn&apos;t. Progress below is local to this browser until you connect.

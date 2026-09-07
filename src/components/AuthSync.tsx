@@ -12,25 +12,32 @@
 // Waits for `user.wallet` specifically, not just `authenticated` — for an
 // email-only login, Privy creates the embedded wallet (see
 // PrivyClientProvider's embeddedWallets config) *after* authentication
-// completes, not atomically with it. Syncing on `authenticated` alone
-// raced that: the identity token minted at that instant often has no
-// linked wallet yet, /api/auth/privy correctly rejects it (no address to
-// resolve), and nothing retried — from the player's side this looked
-// exactly like "I connected and PLAY just... didn't." `user.wallet` is
-// Privy's own live user object, not a cached token, so it updates the
-// moment the embedded wallet actually exists; getIdentityToken() (an
-// imperative fetch, not the possibly-stale useIdentityToken() hook value)
-// is called only once that's true.
+// completes, not atomically with it. `user.wallet` is Privy's own live
+// user object, not a cached token, so it updates the moment the embedded
+// wallet actually exists.
+//
+// Even with the wallet ready, getIdentityToken() (an imperative fetch)
+// can still return null for a beat — observed live on a *wallet* login
+// (signature, no embedded-wallet creation lag at all), so this isn't the
+// same race as the wallet one above; it's the identity token itself
+// taking a moment to reflect a just-completed auth. Retried with a short
+// backoff rather than failing on the first null, and a genuine failure
+// now offers a manual retry — the previous version had neither, so a
+// stuck token would strand the whole session (PLAY/PROFILE/DRAW gates
+// all check identity.ts, which never got set) until a hard reload.
 import { getIdentityToken, usePrivy } from '@privy-io/react-auth'
 import { useEffect, useState } from 'react'
 import { theme } from '@/design/theme'
 import { getIdentity, setIdentity, type Identity } from '@/game/identity'
 import { reconcileIdentity, snapshotActive } from '@/game/profile'
 
+const TOKEN_RETRY_DELAYS_MS = [0, 400, 800, 1500, 3000, 3000] // ~8.7s total before giving up
+
 export default function AuthSync() {
   const { ready, authenticated, user } = usePrivy()
   const hasWallet = Boolean(user?.wallet?.address)
   const [error, setError] = useState<string | null>(null)
+  const [retryNonce, setRetryNonce] = useState(0)
 
   useEffect(() => {
     if (!ready || !authenticated || !hasWallet) return
@@ -40,8 +47,14 @@ export default function AuthSync() {
       setError(null)
       try {
         const guestSnapshot = snapshotActive() // must run before identity switches
-        const identityToken = await getIdentityToken()
-        if (!identityToken) throw new Error('Could not read your Privy identity token.')
+        let identityToken: string | null = null
+        for (const delay of TOKEN_RETRY_DELAYS_MS) {
+          if (cancelled) return
+          if (delay) await new Promise((resolve) => setTimeout(resolve, delay))
+          identityToken = await getIdentityToken()
+          if (identityToken) break
+        }
+        if (!identityToken) throw new Error('Could not read your Privy identity token after several tries.')
         const res = await fetch('/api/auth/privy', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -58,12 +71,12 @@ export default function AuthSync() {
       }
     })()
     return () => { cancelled = true }
-  }, [ready, authenticated, hasWallet])
+  }, [ready, authenticated, hasWallet, retryNonce])
 
   // A silent console.error here was worse than useless the one time this
   // actually broke — nobody watching the game screen has devtools open.
-  // A small dismissible banner at least makes a real failure visible to
-  // whoever's testing.
+  // A small banner with an actual retry at least gives a stuck session a
+  // way out that isn't a hard reload.
   if (!error) return null
   return (
     <div
@@ -85,6 +98,12 @@ export default function AuthSync() {
       }}
     >
       <span>Sign-in failed: {error}</span>
+      <button
+        onClick={() => setRetryNonce((n) => n + 1)}
+        style={{ background: theme.palette.pale, border: 'none', color: theme.palette.ink, cursor: 'pointer', fontFamily: theme.type.family, padding: '2px 8px' }}
+      >
+        RETRY
+      </button>
       <button
         onClick={() => setError(null)}
         style={{ background: 'transparent', border: 'none', color: theme.palette.pale, cursor: 'pointer', fontFamily: theme.type.family }}

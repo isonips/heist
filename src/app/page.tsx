@@ -14,17 +14,21 @@ import { getIdentity } from '@/game/identity'
 
 export default function Home() {
   const [tab, setTab] = useState<TabId>('play')
-  const { login } = usePrivy()
+  const { login, authenticated } = usePrivy()
 
   // "Cliquer sur PROFILE ouvre la connexion wallet" (P1) — PLAY's own gate
   // lives in HeistGame.tsx (it also has to cover RUN AGAIN mid-session);
   // this is the same idea for the tab switch itself, so arriving at
   // PROFILE disconnected doesn't just show a CONNECT button, it opens the
   // login right away. Still lands on the tab either way, so dismissing
-  // the modal isn't a dead end.
+  // the modal isn't a dead end. Skipped when already `authenticated` —
+  // Privy has nothing left to do at that point (AuthSync.tsx is still
+  // exchanging the session, or retrying after a hiccup), and calling
+  // login() again here was a real bug: it left a mid-sync session stuck
+  // with no visible way forward from this tab.
   const changeTab = (t: TabId) => {
     setTab(t)
-    if (t === 'profile' && !getIdentity()) login()
+    if (t === 'profile' && !getIdentity() && !authenticated) login()
   }
 
   return (
