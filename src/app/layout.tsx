@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Silkscreen } from "next/font/google";
+import PrivyClientProvider from "@/components/PrivyClientProvider";
 import "./globals.css";
 
 const silkscreen = Silkscreen({
@@ -20,7 +21,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${silkscreen.variable} antialiased`}>{children}</body>
+      <body className={`${silkscreen.variable} antialiased`}>
+        <PrivyClientProvider>{children}</PrivyClientProvider>
+      </body>
     </html>
   );
 }

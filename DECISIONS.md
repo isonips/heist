@@ -894,3 +894,105 @@ seeing identical numbers — but it was a live bug: anyone changing
 `DURATION_S` alone, expecting it to change the game, would have silently
 gotten nothing.
 
+## P2 — Identity (session brief, "HEIST — session complète")
+
+**Privy is the single client-side auth front door for both login paths,
+not a hand-rolled SIWE nonce/signature flow.** The brief's P2 asks for:
+a nonce, a signed message, server verification, an httpOnly session
+cookie, and — critically — "les deux chemins [email et wallet injecté]
+produisent une adresse traitée à l'identique par le reste du code." Rather
+than build a parallel nonce/message/verify system by hand, the login UI
+uses Privy's own modal (`loginMethods: ['email', 'wallet']`,
+`embeddedWallets.ethereum.createOnLogin: 'users-without-wallets'` so an
+email-only user still gets a real address). Privy already requires a
+signature to link an external wallet, and mints an embedded wallet for
+email-only users — so both paths resolve to exactly one address through
+exactly one code path by construction, which is the strongest possible
+version of "traité à l'identique."
+
+The server never trusts an address the client sends. It verifies Privy's
+**identity token** — a JWT, `usePrivy()`'s `useIdentityToken()` hook on
+the client — via `@privy-io/server-auth`'s `PrivyClient.getUser({idToken})`
+(`src/lib/privyServer.ts`). This decodes locally against Privy's public
+keys (no API round-trip, no rate limit) and returns a `User` whose
+`.wallet.address` is the one thing this whole system trusts. On success,
+`/api/auth/privy` mints the app's **own** session: a stateless HMAC token
+(`address.expiry.signature`, base64url — `src/lib/session.ts`) in an
+httpOnly, secure, sameSite=lax cookie, 30-day TTL. Every server route that
+needs to know "who is this" calls `getSessionAddress()`
+(`src/lib/requireSession.ts`), which reads and verifies that cookie —
+never a request parameter, never a header the client sets.
+
+This satisfies the actual *security property* the brief was describing
+(server-issued nonce-equivalent, nothing client-forgeable, session in an
+httpOnly cookie, one signature at login) without literally being SIWE. It
+is a deliberate deviation from the brief's literal wording
+("Nonce serveur, message signé") — flagged here per the brief's own
+"tranche seul, documente" instruction, since a silent substitution here is
+exactly the kind of judgment call that should be visible rather than
+assumed. No real money or irreversible action is involved in this choice,
+so it did not wait for confirmation, but it's surfaced so it can be
+revisited if Privy turns out to be the wrong call for some reason not
+visible from here (e.g. a cost/ToS concern).
+
+**Session is a stateless HMAC token, not a DB-backed session table.**
+`address.expiry.hmac(address,expiry)`, base64url-encoded. Chosen because:
+nothing to garbage-collect, no extra round-trip on every request, and
+revocation isn't a stated requirement anywhere in the brief — exposure is
+already bounded by the 30-day TTL. If revocation (e.g. "log out
+everywhere") becomes a real requirement later, this is the piece that
+would need to grow a server-side denylist or move to a DB-backed session.
+
+**Username: server-enforced permanence, not just a UI convention.** A DB
+unique index (`profiles_username_unique on lower(username) where username
+is not null`, applied live via migration) is the actual uniqueness
+guarantee — it's the only thing that's still correct under a race between
+two concurrent claims. `/api/auth/username` additionally: rejects outright
+if the session's address already has a username (no "rename" path exists
+server-side, so the client can't accidentally expose one), checks length
+(3-20) and charset (letters/digits/underscore), and checks a reserved-word
+list (`src/game/reservedUsernames.ts`) normalized to catch
+punctuation/case variants. The client (`ProfileTab.tsx`) requires a
+second, explicit "CONFIRM" click after showing "this name is permanent"
+before submitting — satisfying "prévenu clairement avant validation."
+Guest (not-yet-connected) nicknames stay freely renameable, local-only,
+and are deliberately **not** carried over to the server on first connect
+(`profile.ts`'s `reconcileIdentity`) — a guest nickname never passed the
+reserved-word/uniqueness checks, so first-time connects always land on
+the real claim flow instead of silently promoting an unchecked name.
+
+**Three secrets this environment cannot generate or fetch, blocking any
+live verification of this system:**
+- `SESSION_SECRET` — any long random string; needs to be set (and stay
+  identical across deployments that must read each other's cookies) in
+  Vercel. I can generate a candidate value, but setting it in Vercel is
+  explicitly reserved (env vars are a "money/infra" class action here).
+- `PRIVY_APP_SECRET` — from the Privy dashboard, distinct from the
+  already-set public `NEXT_PUBLIC_PRIVY_APP_ID`.
+- `SUPABASE_SERVICE_ROLE_KEY` — from the Supabase dashboard; confirmed no
+  MCP tool exposes it (only `get_publishable_keys` exists, which excludes
+  it by design).
+
+Until these three are set in Vercel, `/api/auth/privy`, `/api/auth/username`
+and anything else touching `supabaseAdmin`/`privyServer`/`session` return
+`503`s (checked explicitly, not left to throw) — the app still builds and
+DEMO still works, PLAY/PROFILE's CONNECT button just won't complete.
+
+**The existing RLS gap (anon can INSERT/UPDATE `profiles`/`stats`/
+`tickets_daily`) is deliberately NOT tightened yet.** `profile.ts`'s
+stats/tickets pushes still write directly with the anon key — flipping
+RLS now would break that live path before P5 replaces it with
+server-authoritative writes through session-checked routes. Tightening
+RLS is sequenced into P5, after those replacements exist and are
+verified, not before.
+
+**`connectInjected()`/raw EIP-1193 wallet connection was removed
+entirely**, not kept as a second option alongside Privy. A raw injected
+address with no signature proves nothing (`identity.ts`'s old comment
+even said so) — exactly the falsifiable pattern P2 warns against. Privy's
+own modal already supports connecting an external injected wallet (with a
+required signature to link it), so there was no case where the old path
+did something Privy's doesn't, and keeping it would have meant two
+address-producing code paths again, undermining the "traité à l'identique"
+property above.
+

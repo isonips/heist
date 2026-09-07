@@ -68,12 +68,10 @@ function writeJson(key: string, value: unknown): void {
 // Fire-and-forget: a swallowed rejection here means this write only made it
 // as far as the local cache this time, which is exactly the point of a
 // cache the server reconciles later rather than a strict two-phase commit.
-function pushUsername(address: string, username: string) {
-  const supabase = getSupabase()
-  if (!supabase) return
-  void supabase.from('profiles').upsert({ address, username, updated_at: new Date().toISOString() }).then(() => {})
-}
-
+// (Username has no push here — claimUsername() above writes it through the
+// session API instead, which is the only path that can enforce permanence
+// and uniqueness; stats/tickets aren't security-sensitive the same way and
+// keep the direct-write cache pattern until P5 replaces it.)
 function pushStats(address: string, stats: ProfileStats) {
   const supabase = getSupabase()
   if (!supabase) return
@@ -100,13 +98,38 @@ export function getUsername(): string | null {
   try { return window.localStorage.getItem(scoped(USERNAME_BASE)) } catch { return null }
 }
 
+/** Guest-only: unlimited, local-only renames — there's no server row to
+ *  protect until an address is connected. Once connected, use
+ *  claimUsername() instead, which is permanent by design (see P2). */
 export function setUsername(name: string): void {
   if (typeof window === 'undefined') return
+  if (getIdentity()) return // connected: this path is guest-only, see claimUsername()
   const trimmed = name.trim().slice(0, 20)
   if (!trimmed) return
   try { window.localStorage.setItem(scoped(USERNAME_BASE), trimmed) } catch { /* unavailable */ }
-  const identity = getIdentity()
-  if (identity) pushUsername(identity.address, trimmed)
+}
+
+/** Connected-only: claims a permanent, unique username through the session
+ *  API (see /api/auth/username) — the server is the only thing that can
+ *  actually guarantee uniqueness (DB unique index) and permanence (rejects
+ *  if this address already has one). Never call this for a guest. */
+export async function claimUsername(name: string): Promise<{ ok: true; username: string } | { ok: false; error: string }> {
+  const trimmed = name.trim()
+  if (!trimmed) return { ok: false, error: 'Enter a name.' }
+  let res: Response
+  try {
+    res = await fetch('/api/auth/username', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: trimmed }),
+    })
+  } catch {
+    return { ok: false, error: 'Network error — try again.' }
+  }
+  const data = (await res.json().catch(() => ({}))) as { username?: string; error?: string }
+  if (!res.ok || !data.username) return { ok: false, error: data.error ?? 'Could not set username.' }
+  try { window.localStorage.setItem(scoped(USERNAME_BASE), data.username) } catch { /* unavailable */ }
+  return { ok: true, username: data.username }
 }
 
 export function getStats(): ProfileStats {
@@ -233,11 +256,13 @@ export async function reconcileIdentity(identity: Identity, guestSnapshot: { use
   }
 
   // First-time connect: claim the guest session's progress, locally and on the server.
-  if (guestSnapshot.username) writeUsernameLocal(suffix, guestSnapshot.username)
+  // Username is deliberately NOT carried over here — a guest nickname never
+  // went through reserved-word/uniqueness checks, so first-time connects
+  // always land on the claimUsername() prompt instead (see P2).
   writeJson(STATS_BASE + suffix, guestSnapshot.stats)
   writeJson(TICKETS_BASE + suffix, guestSnapshot.tickets)
   await Promise.all([
-    supabase.from('profiles').insert({ address: identity.address, username: guestSnapshot.username }),
+    supabase.from('profiles').insert({ address: identity.address }),
     supabase.from('stats').insert({ address: identity.address, ...{
       games_played: guestSnapshot.stats.gamesPlayed,
       games_won: guestSnapshot.stats.gamesWon,
