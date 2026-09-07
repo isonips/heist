@@ -996,3 +996,41 @@ did something Privy's doesn't, and keeping it would have meant two
 address-producing code paths again, undermining the "traité à l'identique"
 property above.
 
+## P6 — Butin/objets, prêts pour le mint rétroactif
+
+**New table `haul_items`** (address, item_type, seed, run_id unique,
+ts, on_chain_batch nullable), RLS enabled with **no policies at all** —
+unlike `profiles`/`stats`/`tickets_daily` (an earlier, looser era where
+the client writes with the anon key, see the RLS-gap note above and P5),
+this table has no legacy client-write path to preserve, so it starts
+locked down from day one: only the service role
+(`src/lib/supabaseAdmin.ts`) ever touches it, via `/api/haul/record`
+(POST, session-authenticated, idempotent on `run_id` — a run earns at
+most one item, same as the game's own "one per run" rule) and `/api/haul`
+(GET, session-authenticated).
+
+**The sealed-chest property is enforced at the API layer, not just the
+UI.** `/api/haul`'s response only ever includes `{ts, revealed}` —
+`item_type` is never selected into the response at all, so there's
+nothing for `MyHaulTab.tsx` to accidentally render even if someone
+extended the component carelessly later. "Ne révèle ni type, ni rareté,
+ni effet" holds even if the UI changes.
+
+**Guest/local `haulStore.ts` is unchanged in what it stores, but now also
+pushes to the server when connected.** It keeps its original per-type
+local counts (that's the player's own transient knowledge of what they
+just picked up mid-run — the HUD already showed them the item name at
+pickup, so it's not a leak) — that local cache is not the sealed record.
+`MyHaulTab.tsx` deliberately does NOT surface the local per-type counts;
+a disconnected guest only sees a total count as a "connect to claim
+these" prompt, never a type breakdown, keeping the tab's own sealed
+framing consistent regardless of connection state.
+
+**Not yet real:** `PLAY` doesn't require a wallet yet (P1's mode gating
+is still pending — task #34), so most runs today don't have a connected
+identity to attach a haul record to; `recordItemEarned()` guards on
+`getIdentity()` being present and silently stays local-only otherwise,
+same degrade-gracefully pattern as `profile.ts`. Once P1 lands, every
+PLAY run will have an address by construction and this stops being a
+gap.
+

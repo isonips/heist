@@ -4,6 +4,7 @@ import { useState } from 'react'
 import WindowChrome, { type TabId } from '@/components/WindowChrome'
 import HeistGame from '@/components/HeistGame'
 import RulesTab from '@/components/RulesTab'
+import MyHaulTab from '@/components/MyHaulTab'
 import ProfileTab from '@/components/ProfileTab'
 import FeedWindow from '@/components/FeedWindow'
 import SplashScreen from '@/components/SplashScreen'
@@ -20,6 +21,7 @@ export default function Home() {
       <WindowChrome active={tab} onChange={setTab}>
         {tab === 'play' && <HeistGame key="play" />}
         {tab === 'rules' && <RulesTab />}
+        {tab === 'haul' && <MyHaulTab />}
         {tab === 'profile' && <ProfileTab />}
       </WindowChrome>
       <FeedWindow />

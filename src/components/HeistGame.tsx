@@ -152,7 +152,7 @@ export default function HeistGame() {
         reportedRef.current = true
         if (run.state.mode === 'paid') {
           const earned = [...run.usedItemsThisRun, ...(run.state.heldItem ? [run.state.heldItem] : [])]
-          earned.forEach(recordItemEarned)
+          earned.forEach((item) => recordItemEarned(item, run.seed, run.runId))
         }
         if (!demo) {
           recordGameResult({
