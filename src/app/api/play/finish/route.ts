@@ -9,7 +9,7 @@
 // client reports about how its own run went.
 import { NextResponse } from 'next/server'
 import { replay, type ItemKey, type ReplayInput, type Result } from '@/game/heistRun'
-import { BONUS_DECAY_PCT_PER_DAY, BONUS_MAX_PCT, BONUS_WIN_PCT, PLAY_PRICE_USDG } from '@/game/economy'
+import { BONUS_DECAY_PCT_PER_DAY, BONUS_MAX_PCT, BONUS_WIN_PCT, PLAY_PRICE_USDG, POT_PCT } from '@/game/economy'
 import { getSessionAddress } from '@/lib/requireSession'
 import { verifyPlayTicket } from '@/lib/playTicket'
 import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
@@ -64,6 +64,7 @@ export async function POST(req: Request) {
 
   const won = result.mode === 'paid'
   const payout = walletPayout(result)
+  const today = todayUTC()
 
   // The 'play' ledger row IS the idempotency gate — its (reason, ref)
   // unique constraint is what actually stops a double-payout if two
@@ -82,6 +83,12 @@ export async function POST(req: Request) {
     await admin.from('ledger').insert({ address, delta: payout, reason: 'loot', ref: decoded.runId })
   }
 
+  // Draw pot (P4): this game's share of the entry fee, atomically
+  // accumulated toward today's pot — 0 today (PLAY_PRICE_USDG is 0), but
+  // the write is real, same "plumbing now, amount later" as the 'play'
+  // ledger row above.
+  await admin.rpc('increment_draw_contribution', { p_day: today, p_amount: PLAY_PRICE_USDG * POT_PCT })
+
   // Haul (P6): the mystery item actually earned this run, if any, read
   // off the server-verified result — never a client claim. The engine's
   // own "one item per run" rule means this is 0 or 1 entries.
@@ -95,7 +102,6 @@ export async function POST(req: Request) {
 
   // Ticket (P4): any win grants one, escape or held-to-end alike — see
   // heistRun.ts's own rule, unchanged, just recorded server-side now.
-  const today = todayUTC()
   if (won) {
     const { data: existingTickets } = await admin.from('tickets_daily').select('count').eq('address', address).eq('day', today).maybeSingle()
     await admin.from('tickets_daily').upsert({ address, day: today, count: (existingTickets?.count ?? 0) + 1 })

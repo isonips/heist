@@ -1299,3 +1299,77 @@ actually fires it, what "reproducible with the same seed" means for a
 winner-selection RNG) that weren't reached this session — see the
 session's final punch-list.
 
+## P4 — Daily draw
+
+**Built this round, on top of the above.** `src/game/draw.ts` is pure,
+DB-free logic — same shape as `replay()`: `pickDrawWinner(seed, entries)`
+picks a winner weighted by ticket count using the game's own seeded RNG
+(`src/game/rng.ts`, the same xorshift32 the engine itself uses — no
+`Math.random` anywhere in this codebase's real-money paths, consistent
+with the existing rule), and `seedForDrawDay(day)` derives that seed from
+the date string alone (FNV-1a — not a security boundary, the date is
+public, just deterministic and cheap). Same seed, same ticket list,
+same winner, always — literally "rejouable: même graine, même gagnant."
+`payoutForWinner(pot, bonusPct, hasLifetimeCode)` applies the bonus
+multiplier and the "no code -> capped at half the pot" fallback the
+brief itself specifies.
+
+**`hasLifetimeCode` is hardcoded `false` at its one call site
+(`/api/draw/run`) — not a placeholder standing in for a bug, the actual
+correct value today.** The codes system (10-wins unlock, referral,
+manual attribution) isn't built yet, so nobody has a code; every winner
+is capped at half the pot, which is exactly the brief's stated behavior
+for a winner without one. Wiring a real per-address lookup here is a
+one-line change once codes exist.
+
+**`increment_draw_contribution(day, amount)`** is a new atomic RPC
+(`SECURITY DEFINER`, same pattern as `roll_global_drop`) that
+`/api/play/finish` calls after every game — `POT_PCT * PLAY_PRICE_USDG`,
+currently always 0, but the write is real and happens every game, same
+"plumbing now, amount later" as the ledger's `play` row. `draw_days`
+(one row per calendar day: seed, contributions, the settled winner/
+payout/rollover once run) has public `SELECT` — P8 needs pot/countdown/
+previous-winner visible to a disconnected visitor — but no write policy
+at all; only `/api/draw/run` (service role) ever settles a day.
+
+**Trigger: Vercel Cron, not a manual step** (`vercel.json`, daily at
+00:00 UTC) — satisfies "déclenchement sans intervention manuelle."
+`/api/draw/run` settles *yesterday's* (UTC) tickets — you can't finalize
+a day's tickets while it isn't over — and checks a new `CRON_SECRET` env
+var against the `Authorization: Bearer <secret>` header Vercel
+automatically attaches to a scheduled invocation once that env var is
+set. **Requires `CRON_SECRET` in Vercel to actually fire** — flagged
+alongside this write-up, not something I can set myself (see
+`.env.example`); doesn't move money on its own (`PLAY_PRICE_USDG` is
+still 0), so it isn't a "real money" decision, just a required
+deployment step, same class as the three P2 secrets.
+
+**Settling is idempotent (`ran_at` guard), which is a different property
+from "rejouable."** A day that's already been paid never gets
+reprocessed or re-paid by a second `/api/draw/run` call (that would be a
+real double-payout bug) — but `pickDrawWinner()` itself, the pure
+function, can be independently re-run by anyone with the day's seed and
+that day's `tickets_daily` rows and will always reach the identical
+winner, for audit, regardless of whether it's ever "replayed" for a
+payout. The prize itself lands in the normal `ledger` (`reason='prize',
+ref='draw:<day>'`), reusing the same `unique(reason, ref)` idempotency
+the rest of P5 already relies on.
+
+**Rollover chain:** each settled day stores its own `rollover` (what
+wasn't paid out); the next day's opening pot is read from the most
+recent *settled* day's `rollover`, not assumed to be yesterday
+specifically — a gap with no plays at all just means 0 rolled in, same
+as day one ever had.
+
+**UI: folded into `ProfileTab`'s existing "Tonight's draw" section
+rather than a new dedicated page/tab.** The brief's P8 describes a
+separate draw page; given the scope already covered this session, adding
+pot/countdown/last-winner as a few more rows in an already-open section
+was the pragmatic call over standing up a new tab for three data points
+— a dedicated page is still reasonable to build later (P8 is not
+otherwise touched), this just isn't it.
+
+**Still not done: the codes system itself** (10-wins unlock, referral at
+$500 filleul volume, manual attribution with a traceable prefix). Genuine
+remaining scope, not started.
+
