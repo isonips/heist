@@ -43,3 +43,8 @@ next-env.d.ts
 
 # calibration harness output (regenerate with npx tsx src/harness/cli.ts)
 /harness-out/
+
+# contracts/ is a separate npm project (Hardhat) — see contracts/README.md
+/contracts/node_modules
+/contracts/cache
+/contracts/artifacts

@@ -1034,3 +1034,68 @@ same degrade-gracefully pattern as `profile.ts`. Once P1 lands, every
 PLAY run will have an address by construction and this stops being a
 gap.
 
+## P10 — Vault + HaulLedger contracts, written and tested, **not deployed**
+
+**Written, not deployed — per the brief's own instruction ("ne déploie
+rien sans moi").** Live in `contracts/` as a separate npm project (own
+`package.json`), outside the Next.js app's build. `Vault.sol` and
+`HaulLedger.sol` — see `contracts/README.md` for the full picture; this
+section covers the decisions.
+
+**`Vault.sol`: deposit/withdraw only, deliberately no owner, no pause, no
+admin function of any kind.** "Retrait toujours possible sans permission"
+is read literally: there is no function anywhere in the contract that
+could gate, pause, or block a withdrawal — not because it's disabled, but
+because it was never written. `balanceOf` is internal accounting (not
+`token.balanceOf(address(this))`, which a direct token transfer into the
+contract could otherwise desync) — solvency (`sum(balanceOf) ==
+token.balanceOf(vault)`) is asserted as an invariant across a mixed
+deposit/withdraw sequence in the test suite, not just spot-checked.
+Reentrancy is guarded two ways at once (OZ's `nonReentrant` modifier, and
+effects-before-interaction — balance is debited before the token
+transfer) and a test proves it: a malicious ERC20 mock that calls back
+into `withdraw()` from inside its own `transfer()` is used to show the
+guard actually stops a double-spend, not just that the happy path works.
+
+**`HaulLedger.sol`: stores a Merkle root per batch, not the batch's
+entries.** Putting every kept-loot record on chain individually would be
+expensive for no real benefit — a root lets the server later prove any
+one item's inclusion in a specific batch without the chain ever having
+held player-level detail. Append-only is a property of the function
+surface (there is no `setBatchRoot`/`deleteBatch`/etc. — verified
+directly in the test suite by asserting the ABI doesn't contain one), not
+a policy. The recorder role uses a 2-step handoff (`proposeRecorder` /
+`acceptRecorder`, OZ's `Ownable2Step` pattern applied to a plain address
+instead of full `Ownable`) so a compromised or retiring recorder key can
+be rotated without a typo permanently orphaning the role.
+
+**Known, deliberate gap: no on-chain "debit for a game" function on
+`Vault`.** P7's `deposit` payment path needs something to reduce a
+player's on-chain balance when they play a game funded from a prior
+deposit — that's a genuine unresolved design question (what account can
+call it, what limits it, how it reconciles with the off-chain ledger),
+and deciding who gets to move a player's custodied funds without a fresh
+per-game signature is exactly a real-money design call, not one to guess
+at silently. Not built here — see `contracts/README.md`'s last section.
+The `perRun` payment path doesn't need this at all (each game is its own
+on-chain transaction), so it isn't blocked by this gap.
+
+**Toolchain note, not a design decision:** this sandbox's egress
+allowlist blocks `binaries.soliditylang.org`, which is where Hardhat's
+built-in `compile`/`test` tasks try to download solc from — so both were
+worked around (compiling via the `solc` **npm package** instead, and a
+hand-rolled test runner via `hardhat run --no-compile` instead of
+`hardhat test`'s Mocha, which also auto-compiles first). Full detail and
+exact commands in `contracts/README.md`. All 14 tests pass locally
+(`cd contracts && npm test`); nothing here required weakening a test to
+get around the network limitation, only the compile step.
+
+**Robinhood Chain target, not verified against a live RPC from this
+sandbox** — the same network limitation blocks reaching
+`https://rpc.mainnet.chain.robinhood.com` (an Arbitrum Orbit L2, chainId
+4663) to confirm it directly. The brief's own instruction ("vérifie les
+deux avant tout déploiement") is preserved as a blocking pre-deploy step,
+not skipped — recorded here as still outstanding, to be done (by me, if
+this sandbox gains reach, or by you) before any real deployment, which
+in any case waits for you regardless.
+
