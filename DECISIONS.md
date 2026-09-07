@@ -1139,3 +1139,30 @@ that's static/build-time verification, not the real click-through this
 task is ultimately supposed to confirm. Asking you to smoke-test PLAY and
 PROFILE once this is deployed is the fastest real check.
 
+**Bug found from that smoke test: "connected but the game doesn't open."**
+Root cause — `AuthSync.tsx` was syncing on `authenticated` alone. For an
+email login, Privy creates the embedded wallet *after* authentication
+completes, not atomically with it (see `PrivyClientProvider`'s
+`embeddedWallets.ethereum.createOnLogin` config). The identity token
+minted the instant `authenticated` flips true often has no wallet linked
+yet; `/api/auth/privy` correctly rejects that (nothing to resolve an
+address from), and nothing retried — `pendingPlayRef` in `HeistGame.tsx`
+just sat there forever, which from the player's side looked exactly like
+"I connected and PLAY did nothing." A wallet-login (external wallet,
+already attached at auth time) likely wasn't hit by this same race, so
+this was probably email-path-specific.
+
+Fixed by waiting on `user.wallet` instead of `authenticated` —
+`usePrivy()`'s `user` is Privy's live object, not a cached token, so it
+updates the moment the embedded wallet actually exists. Once it does, the
+exchange now calls `getIdentityToken()` (an imperative, fresh fetch)
+rather than relying on the `useIdentityToken()` hook's possibly-stale
+cached value. Also added a small visible error banner (`AuthSync.tsx`
+now renders instead of always returning `null`) — the previous
+`console.error`-only failure mode meant a real failure was invisible to
+anyone not holding devtools open, which is exactly how this one shipped
+unnoticed. Still not click-tested live from this sandbox (same network
+block); this is the fix from reading the actual Privy SDK types and
+reasoning through the timing, not from watching it fail and retrying —
+worth a second real smoke test once redeployed.
+
