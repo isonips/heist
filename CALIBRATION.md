@@ -480,6 +480,79 @@ within the same four constants found a strict improvement. Accepted as
 final per instruction ("on laisse comme ça") rather than continuing to
 search or loosening a target band.
 
+## P3: wallet payout table vs. the 45% loot budget — doesn't close, reported not forced
+
+**The brief's ask:** a 10 USDG entry splits 45% loot budget / 45% draw
+pot / 10% treasury (config, not hardcoded). The wallet payout table
+(`heistRun.ts` — nothing / refund 10 / double 20, at 45/43/12%) predates
+the commitment-window mechanic; the brief's own framing says it was
+calibrated against a lootKeptRate "measured around 37%" before that
+mechanic existed, and asks to re-measure spawn/conservation now and
+re-derive the probabilities so the effective payout matches the 45%
+budget, keeping the three dollar amounts (0/10/20) fixed.
+
+**Measured** (`npx tsx src/harness/measure.ts 20000`, rational bot —
+plays to maximize EV, the one bot in this codebase built to face the
+actual escape-vs-hold decision; greedy bot, which never escapes
+voluntarily, agrees closely):
+
+| | rational bot | greedy bot |
+|---|---|---|
+| spawn rate (wallet appears in the run at all) | 55.1% (11023/20000) | matches the 0.55 roll in code, as a sanity check |
+| conservation rate (kept, given spawned) | 20.8% | 21.6% |
+| **overall keep rate** (kept, over *all* games) | **11.4%** | 11.9% |
+
+That 37% figure in the brief doesn't hold up against a direct
+measurement — current conservation is closer to 21%, not 37%, and the
+two bots (one that never voluntarily gives up value, one that plays the
+real hold/escape tradeoff) land within a point of each other, so this
+isn't a bot-policy artifact.
+
+**The budget doesn't close, and it isn't close.** Target: 45% of 10
+USDG = 4.5 USDG expected payout per game. With an 11.4% overall keep
+rate and a payout capped at 20 (double), the *maximum possible* expected
+payout — even at `p(double)=100%, p(nothing)=p(refund)=0%`, i.e. every
+kept wallet pays the max — is `0.114 × 20 = 2.29 USDG`, **~51% of the
+target, not a rounding gap.** There is no probability table over
+{0, 10, 20} that reaches 4.5 USDG per game at this keep rate; the
+equation `spawn × keep × E[payout|kept] = 4.5` has no solution with
+`E[payout|kept] ≤ 20`. Following this session's standing rule (measure
+honestly, report a structural miss rather than force a number to fit) —
+this is being reported, not silently patched with a probability table
+that only pretends to hit 45%.
+
+**Why this also fails the P3 RTP=90% target, not just the loot line
+item:** 45% (loot) + 45% (draw pot, fully returned to players over time
+via rollover — nothing is ever burned) + 10% (treasury) sums to exactly
+90% RTP by construction *if the loot budget is actually paid out*. At
+the achievable 22.9% ceiling instead of 45%, aggregate RTP tops out
+around 10% + 22.9% + 45% = **77.9%**, not 90% — the same shortfall,
+one level up.
+
+**Not fixed here, because every fix touches money design:**
+- Raise the payout ceiling (e.g. "double" pays more than 2x, or add a
+  bigger top-tier outcome) — the brief said keep 0/10/20 fixed, so this
+  would be a deviation from that constraint, not just a probability
+  recalibration.
+- Treat "Budget butin" as covering more than wallet cash — painting
+  (NFT) and mystery-item drops are loot too (P6), and they're on a
+  separate global-counter mechanism with no dollar value assigned yet
+  (`onChainBatch` stays null until mint). If they're meant to absorb
+  part of the 45%, the wallet-cash share of that budget is smaller than
+  4.5 USDG/game and the table *might* close — but I don't have a real
+  dollar figure for painting/item EV to net out, so I can't compute
+  that split without inventing one.
+- Raise spawn/conservation rates via game design (loot spawns more
+  often, or the commitment window makes holding less risky) — changes
+  the game itself, not just the payout table, and interacts with the
+  P0 calibration already locked in above.
+
+Flagged rather than decided, per "si un choix engage de l'argent réel,
+note-le et attends-moi" — this is exactly that kind of choice. The
+harness and the measurement above are ready to re-derive the table the
+moment a direction is picked; `p(refund)`/`p(double)` solve in one line
+once either the payout ceiling or the budget split is settled.
+
 ## Known-fixed issues
 
 - `buildMap` (the dormant `src/engine/`) could end on a live 'road' lane
