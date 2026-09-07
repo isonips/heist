@@ -1373,3 +1373,72 @@ otherwise touched), this just isn't it.
 $500 filleul volume, manual attribution with a traceable prefix). Genuine
 remaining scope, not started.
 
+## P4 — Codes (built this round; the reading behind it is a real judgment call)
+
+**Built:** `codes` table (`code, issuer_address, source, redeemed_by,
+redeemed_at`), `profiles` grew `referred_by`/`lifetime_unlocked`.
+`POST /api/codes/redeem` claims a code for the session's address (an
+`update ... where code=X and redeemed_by is null` is the idempotency
+guard under a race — verified directly against the DB that a second
+claim attempt on an already-redeemed code matches zero rows, not an
+error). `GET /api/codes` returns the caller's unlock status and any
+still-unredeemed code they've been issued. `/api/play/finish` issues a
+`ten_wins` code the moment an address crosses `WINS_TO_ISSUE_CODE` wins
+(once — an existence check guards a second issuance across many later
+runs), and checks a referred address's own play volume against
+`REFERRAL_VOLUME_USDG` every game, unlocking automatically the moment it
+crosses. `/api/draw/run` now reads the real `profiles.lifetime_unlocked`
+instead of the hardcoded `false` from the previous commit.
+
+**The brief names three ways to obtain a code but doesn't fully specify
+how they compose — this is genuinely underspecified, and the reading
+below is an interpretation, not something to treat as settled:**
+
+> "Obtention à 10 parties gagnées, via un parrain à 500$ de volume
+> filleul, ou attribution manuelle avec préfixe traçable pour les
+> partenaires."
+
+Two things aren't pinned down: whether a code unlocks *its issuer* or
+*whoever redeems it*, and whether redeeming a code unlocks *immediately*
+or *conditionally*. The reading this implements, and why:
+
+- **`ten_wins`**: earning it (10 wins) issues *you* a code — but its
+  purpose is to hand to someone else, not redeem yourself (`issuer_address
+  === address` is rejected outright at redemption). This matches "un
+  code débloque un compte à vie" read as "a code unlocks *an* account"
+  (the redeemer's), not "unlocks the account that earned it" (which
+  wouldn't need a code at all — the server could just flip a flag at 10
+  wins directly).
+- **Redeeming a `ten_wins`/`referral` code does NOT unlock immediately**
+  — it only sets `referred_by` on the redeemer, linking them to the
+  issuer. The actual unlock fires later, automatically, once *that*
+  address's own volume crosses `REFERRAL_VOLUME_USDG`. This is what
+  makes "obtention... via un parrain à 500$ de volume filleul" a
+  meaningfully distinct third path rather than a duplicate of "redeem a
+  code" — if redemption unlocked outright, the $500-volume clause would
+  never do anything.
+- **`manual` codes unlock immediately on redemption**, no volume gate —
+  this is the one case where "attribution manuelle... pour les
+  partenaires" reads most naturally as a direct grant a partner hands
+  someone, not a conditional one.
+
+If this reading is wrong, it's a small, contained change (the
+`if (codeRow.source === 'manual')` branch in `/api/codes/redeem` is the
+only place the two behaviors diverge) — flagged here explicitly so it
+gets checked rather than assumed correct.
+
+**Volume is `sum(abs(delta))` from `ledger` where `reason='play'` for
+that address** — total money actually spent playing. Always 0 while
+`PLAY_PRICE_USDG` is 0, so the referral path can't fire in practice yet,
+same dormant-but-real plumbing as everywhere else this round.
+
+**Not built: any way to actually create a `manual` code.** "Attribution
+manuelle avec préfixe traçable pour les partenaires" implies a human
+(you, or a partner-facing admin flow) explicitly creates one — there's
+no admin/partner role or auth concept in this app at all yet, and
+building one was out of scope for finishing this checklist item. Today,
+a manual code is inserted directly into the `codes` table (e.g. via the
+Supabase dashboard or MCP) with whatever prefix marks the partner —
+`source='manual'`, `issuer_address` optional. A real admin UI/route for
+this is future work if partner codes need to be self-serve.
+

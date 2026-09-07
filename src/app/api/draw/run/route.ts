@@ -58,13 +58,12 @@ export async function POST(req: Request) {
   let rollover = pot
 
   if (pick.winnerAddress) {
-    const { data: winnerStats } = await admin.from('stats').select('bonus_pct').eq('address', pick.winnerAddress).maybeSingle()
+    const [{ data: winnerStats }, { data: winnerProfile }] = await Promise.all([
+      admin.from('stats').select('bonus_pct').eq('address', pick.winnerAddress).maybeSingle(),
+      admin.from('profiles').select('lifetime_unlocked').eq('address', pick.winnerAddress).maybeSingle(),
+    ])
     winnerBonusPct = winnerStats?.bonus_pct ?? 0
-    // No lifetime-unlock code system exists yet (P4) — every winner is
-    // capped at half the pot today, per the brief's own stated fallback
-    // for a winner without one. Not a workaround; wire a real lookup
-    // here once codes exist.
-    const hasLifetimeCode = false
+    const hasLifetimeCode = winnerProfile?.lifetime_unlocked ?? false
     ;({ payout, rollover } = payoutForWinner(pot, winnerBonusPct, hasLifetimeCode))
 
     if (payout > 0) {

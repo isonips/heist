@@ -19,3 +19,11 @@ export const TREASURY_PCT = 0.1
 export const BONUS_MAX_PCT = 100
 export const BONUS_WIN_PCT = 10
 export const BONUS_DECAY_PCT_PER_DAY = 20
+
+// Codes (P4): "un code débloque un compte à vie et le démarre à 50% de
+// bonus." WINS_TO_ISSUE_CODE/REFERRAL_VOLUME_USDG are both real
+// thresholds today even though volume is always 0 while PLAY_PRICE_USDG
+// is — same "plumbing now, amount later" as everything else this round.
+export const BONUS_START_WITH_CODE_PCT = 50
+export const WINS_TO_ISSUE_CODE = 10
+export const REFERRAL_VOLUME_USDG = 500

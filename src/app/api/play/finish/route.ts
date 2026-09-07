@@ -9,7 +9,17 @@
 // client reports about how its own run went.
 import { NextResponse } from 'next/server'
 import { replay, type ItemKey, type ReplayInput, type Result } from '@/game/heistRun'
-import { BONUS_DECAY_PCT_PER_DAY, BONUS_MAX_PCT, BONUS_WIN_PCT, PLAY_PRICE_USDG, POT_PCT } from '@/game/economy'
+import {
+  BONUS_DECAY_PCT_PER_DAY,
+  BONUS_MAX_PCT,
+  BONUS_START_WITH_CODE_PCT,
+  BONUS_WIN_PCT,
+  PLAY_PRICE_USDG,
+  POT_PCT,
+  REFERRAL_VOLUME_USDG,
+  WINS_TO_ISSUE_CODE,
+} from '@/game/economy'
+import { generateCode } from '@/lib/codes'
 import { getSessionAddress } from '@/lib/requireSession'
 import { verifyPlayTicket } from '@/lib/playTicket'
 import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
@@ -116,11 +126,31 @@ export async function POST(req: Request) {
   let bonus = Math.max(0, prevBonus - BONUS_DECAY_PCT_PER_DAY * daysSince)
   if (won) bonus = Math.min(BONUS_MAX_PCT, bonus + BONUS_WIN_PCT)
 
+  const gamesWonBefore = statsRow?.games_won ?? 0
+  const gamesWonAfter = gamesWonBefore + (won ? 1 : 0)
+
+  // Referral unlock (P4): a referred address unlocks automatically once
+  // its own volume (money actually spent playing) crosses
+  // REFERRAL_VOLUME_USDG. Always 0 while PLAY_PRICE_USDG is, so this
+  // never fires in practice yet — same "real plumbing, dormant amount"
+  // as the draw pot contribution above.
+  const { data: profileRow } = await admin.from('profiles').select('referred_by, lifetime_unlocked').eq('address', address).maybeSingle()
+  let justUnlocked = false
+  if (profileRow?.referred_by && !profileRow.lifetime_unlocked) {
+    const { data: playRows } = await admin.from('ledger').select('delta').eq('address', address).eq('reason', 'play')
+    const volume = (playRows ?? []).reduce((sum, r) => sum + Math.abs(Number(r.delta)), 0)
+    if (volume >= REFERRAL_VOLUME_USDG) {
+      justUnlocked = true
+      bonus = Math.max(bonus, BONUS_START_WITH_CODE_PCT)
+      await admin.from('profiles').update({ lifetime_unlocked: true }).eq('address', address)
+    }
+  }
+
   const walletKept = won && (result.hands === 'wallet' || result.hands === 'both')
   const paintingKept = won && (result.hands === 'painting' || result.hands === 'both')
   const newStats = {
     gamesPlayed: (statsRow?.games_played ?? 0) + 1,
-    gamesWon: (statsRow?.games_won ?? 0) + (won ? 1 : 0),
+    gamesWon: gamesWonAfter,
     totalCrossings: (statsRow?.total_crossings ?? 0) + result.crossed,
     walletsStolen: (statsRow?.wallets_stolen ?? 0) + (walletKept ? 1 : 0),
     walletWinningsTotal: (statsRow?.wallet_winnings_total ?? 0) + payout,
@@ -139,9 +169,21 @@ export async function POST(req: Request) {
     updated_at: new Date().toISOString(),
   })
 
+  // Codes (P4): issue a ten_wins code the moment this address crosses
+  // the threshold, once — the existence check makes this safe even if
+  // called more than once for the same address over time (it can't be
+  // for the *same run*, thanks to the idempotency gate above, but wins
+  // accumulate across many runs).
+  if (gamesWonBefore < WINS_TO_ISSUE_CODE && gamesWonAfter >= WINS_TO_ISSUE_CODE) {
+    const { data: alreadyIssued } = await admin.from('codes').select('code').eq('issuer_address', address).eq('source', 'ten_wins').maybeSingle()
+    if (!alreadyIssued) {
+      await admin.from('codes').insert({ code: generateCode(), issuer_address: address, source: 'ten_wins' })
+    }
+  }
+
   await admin.from('play_results').insert({ run_id: decoded.runId, address, seed: decoded.seed, result })
 
   const { data: ticketsRow } = await admin.from('tickets_daily').select('count').eq('address', address).eq('day', today).maybeSingle()
 
-  return NextResponse.json({ result, stats: newStats, ticketsToday: ticketsRow?.count ?? 0 })
+  return NextResponse.json({ result, stats: newStats, ticketsToday: ticketsRow?.count ?? 0, justUnlocked })
 }

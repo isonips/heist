@@ -28,10 +28,52 @@ export default function ProfileTab() {
   const [identity, setLocalIdentity] = useState<Identity | null>(null)
   const [draw, setDraw] = useState<{ pot: number; previous: { day: string; winnerAddress: string | null; payout: number; totalTickets: number } | null } | null>(null)
   const [countdown, setCountdown] = useState('')
+  const [codeInfo, setCodeInfo] = useState<{ lifetimeUnlocked: boolean; issuedCode: string | null } | null>(null)
+  const [redeemDraft, setRedeemDraft] = useState('')
+  const [redeeming, setRedeeming] = useState(false)
+  const [redeemMsg, setRedeemMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
     fetch('/api/draw').then((res) => res.json()).then((data) => { if (data.pot !== undefined) setDraw(data) }).catch(() => {})
   }, [])
+
+  const refreshCodes = useCallback(() => {
+    if (!getIdentity()) { setCodeInfo(null); return }
+    fetch('/api/codes').then((res) => res.json()).then((data) => {
+      if (data.lifetimeUnlocked !== undefined) setCodeInfo(data)
+    }).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    refreshCodes()
+    return onIdentityChange(refreshCodes)
+  }, [refreshCodes])
+
+  const redeemCode = async () => {
+    const code = redeemDraft.trim()
+    if (!code) return
+    setRedeeming(true)
+    setRedeemMsg(null)
+    try {
+      const res = await fetch('/api/codes/redeem', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setRedeemMsg({ ok: false, text: data.error ?? 'Could not redeem.' })
+      } else {
+        setRedeemDraft('')
+        setRedeemMsg({ ok: true, text: data.unlocked ? 'Unlocked!' : 'Linked — unlocks once your volume hits the referral threshold.' })
+        refreshCodes()
+      }
+    } catch {
+      setRedeemMsg({ ok: false, text: 'Network error — try again.' })
+    } finally {
+      setRedeeming(false)
+    }
+  }
 
   useEffect(() => {
     const tick = () => {
@@ -199,6 +241,47 @@ export default function ProfileTab() {
         win at the draw: +10% per win, −20% per calendar day you don&apos;t play, 0-100%. One winner a day,
         picked weighted by ticket count; whatever they don&apos;t collect rolls into tomorrow&apos;s pot.
       </p>
+
+      {identity && (
+        <>
+          <h3 style={{ color: pal.amber, fontSize: BODY, fontWeight: 700, marginTop: 16 }}>Lifetime unlock</h3>
+          {codeInfo?.lifetimeUnlocked ? (
+            <p style={{ color: pal.gold, fontSize: FEED, marginTop: 0 }}>Unlocked — no draw cap.</p>
+          ) : (
+            <>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  value={redeemDraft}
+                  disabled={redeeming}
+                  onChange={(e) => { setRedeemDraft(e.target.value); setRedeemMsg(null) }}
+                  onKeyDown={(e) => e.key === 'Enter' && redeemCode()}
+                  placeholder="have a code?"
+                  style={{
+                    flex: 1,
+                    background: pal.chrome,
+                    color: pal.pale,
+                    border: `1px solid ${pal.ink}`,
+                    fontFamily: theme.type.family,
+                    fontSize: BODY,
+                    padding: '6px 8px',
+                  }}
+                />
+                <button onClick={redeemCode} disabled={redeeming} style={buttonStyle}>REDEEM</button>
+              </div>
+              {redeemMsg && <p style={{ color: redeemMsg.ok ? pal.gold : pal.sirenRed, fontSize: FEED, marginTop: 4 }}>{redeemMsg.text}</p>}
+              <p style={{ color: pal.concrete, fontSize: FEED, marginTop: 4 }}>
+                Without a code, a draw win is capped at half the pot. Unlock removes the cap and starts
+                your bonus at 50%.
+              </p>
+            </>
+          )}
+          {codeInfo?.issuedCode && (
+            <p style={{ color: pal.concrete, fontSize: FEED, marginTop: 4 }}>
+              Your code to share: <span style={{ color: pal.gold }}>{codeInfo.issuedCode}</span>
+            </p>
+          )}
+        </>
+      )}
 
       <h3 style={{ color: pal.amber, fontSize: BODY, fontWeight: 700, marginTop: 16 }}>Stats</h3>
       <div style={row}>
