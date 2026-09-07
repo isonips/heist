@@ -1534,3 +1534,40 @@ first real click-through remains the only way these surface. Worth
 treating every "it doesn't work" report from here on as a likely real
 bug report, not user error, given the track record so far (two for two).
 
+## P7 — perRun path chosen; `HeistPlay.sol` written and tested, not deployed
+
+**The user picked the path and gave the design directly**: perRun, not
+deposit. One signed transaction per game (10 USDG), sent straight to
+HEIST's contract, which splits it into the lucky draw, in-game payouts
+(loot), and treasury — matching P3's original 45/45/10 framing, now with
+an actual contract behind it.
+
+`contracts/contracts/HeistPlay.sol` (21 tests, all passing —
+`cd contracts && npm test`): `play(bytes32 runId)` pulls `playPrice` USDG
+from the caller, sends `treasuryBps` of it to `treasury` immediately, and
+leaves the rest pooled in the contract's own balance. `payout(to, ref,
+amount, reason)` — `operator`-only, `reason` restricted to `loot`/
+`prize` — moves funds out of that pool; idempotent on `ref`, reverting
+outright on a repeat rather than silently no-op-ing. `owner` (2-step
+transfer, same pattern as `HaulLedger`'s recorder) controls
+`playPrice`/`treasuryBps`/`treasury`/`operator`.
+
+**Deliberately doesn't maintain separate on-chain balances for the pot
+vs. the loot budget** — both stay pooled together; the off-chain `ledger`
+table (P5) is what actually tracks which portion is earmarked for what,
+via its existing `reason` column. Mirrors the off-chain system's own
+shape (one ledger, `reason` distinguishes movements) rather than
+inventing an on-chain notion of "today's pot," which the contract has no
+way to compute correctly anyway — that requires knowing every game's
+verified outcome, and only server-side `replay()` determines that.
+
+**Still not wired into the running app** — `/api/play/start`/`finish`
+don't call this contract yet (there's no deployed address to call, and
+`PLAY_PRICE_USDG` is still 0). Wiring it in later means: `start` requires
+proof of a `play()` transaction before issuing a ticket, and `finish`
+calls `HeistPlay.payout()` (as `operator`) alongside its existing
+off-chain ledger writes, not instead of them — the off-chain ledger
+stays the accounting source of truth either way. Not deployed anywhere,
+per the standing instruction; see `contracts/README.md` for the fuller
+writeup.
+

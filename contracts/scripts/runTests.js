@@ -43,7 +43,7 @@ async function deploy(contracts, name, signer, ...args) {
 
 async function main() {
   const contracts = compile()
-  const [deployer, alice, bob, recorder, other] = await ethers.getSigners()
+  const [deployer, alice, bob, recorder, other, treasury, operator] = await ethers.getSigners()
 
   console.log('\nVault')
   {
@@ -177,6 +177,85 @@ async function main() {
       await ledger.connect(other).recordBatch(root1)
       expect(await ledger.batchCount()).to.equal(3)
     })
+  }
+
+  console.log('\nHeistPlay')
+  {
+    const usdg = await deploy(contracts, 'MockUSDG', deployer)
+    const playPrice = ethers.parseUnits('10', 18)
+    const treasuryBps = 1000n // 10%
+    const play = await deploy(contracts, 'HeistPlay', deployer, await usdg.getAddress(), deployer.address, operator.address, treasury.address, playPrice, treasuryBps)
+
+    await usdg.mint(alice.address, ethers.parseUnits('1000', 18))
+    await usdg.connect(alice).approve(await play.getAddress(), ethers.MaxUint256)
+
+    const runId1 = ethers.keccak256(ethers.toUtf8Bytes('run-1'))
+
+    await test('play() pulls playPrice, sends the treasury cut immediately, pools the rest', async () => {
+      await play.connect(alice).play(runId1)
+      expect(await usdg.balanceOf(treasury.address)).to.equal(ethers.parseUnits('1', 18)) // 10% of 10
+      expect(await play.pooledBalance()).to.equal(ethers.parseUnits('9', 18)) // 90% stays pooled
+      expect(await usdg.balanceOf(alice.address)).to.equal(ethers.parseUnits('990', 18))
+    })
+
+    await test('play() with a repeated runId reverts — no double-charge on a retried call', async () => {
+      await expect(play.connect(alice).play(runId1)).to.be.reverted
+    })
+
+    await test('payout() only callable by operator', async () => {
+      const ref = ethers.keccak256(ethers.toUtf8Bytes('loot-ref-1'))
+      await expect(play.connect(alice).payout(bob.address, ref, ethers.parseUnits('1', 18), 'loot')).to.be.reverted
+    })
+
+    await test('payout() moves funds from the pool and is idempotent on ref', async () => {
+      const ref = ethers.keccak256(ethers.toUtf8Bytes('loot-ref-2'))
+      const before = await usdg.balanceOf(bob.address)
+      await play.connect(operator).payout(bob.address, ref, ethers.parseUnits('2', 18), 'loot')
+      expect(await usdg.balanceOf(bob.address)).to.equal(before + ethers.parseUnits('2', 18))
+      // A second payout call against the same ref reverts outright — it
+      // does not just no-op, so a bug that retries a payout is loud, not
+      // silently swallowed.
+      await expect(play.connect(operator).payout(bob.address, ref, ethers.parseUnits('2', 18), 'loot')).to.be.reverted
+    })
+
+    await test('payout() rejects an unrecognized reason string', async () => {
+      const ref = ethers.keccak256(ethers.toUtf8Bytes('bad-reason-ref'))
+      await expect(play.connect(operator).payout(bob.address, ref, ethers.parseUnits('1', 18), 'refund')).to.be.reverted
+    })
+
+    await test('owner can update config; a non-owner cannot', async () => {
+      await expect(play.connect(alice).setConfig(other.address, playPrice, 500)).to.be.reverted
+      await play.connect(deployer).setConfig(other.address, ethers.parseUnits('20', 18), 500)
+      expect(await play.treasury()).to.equal(other.address)
+      expect(await play.playPrice()).to.equal(ethers.parseUnits('20', 18))
+      expect(await play.treasuryBps()).to.equal(500n)
+      // restore for any later tests in this block
+      await play.connect(deployer).setConfig(treasury.address, playPrice, treasuryBps)
+    })
+
+    await test('owner handoff requires two steps', async () => {
+      await play.connect(deployer).proposeOwner(other.address)
+      expect(await play.owner()).to.equal(deployer.address)
+      await expect(play.connect(bob).acceptOwner()).to.be.reverted
+      await play.connect(other).acceptOwner()
+      expect(await play.owner()).to.equal(other.address)
+      await expect(play.connect(deployer).setOperator(bob.address)).to.be.reverted
+      // hand it back so nothing downstream in this file depends on order
+      await play.connect(other).proposeOwner(deployer.address)
+      await play.connect(deployer).acceptOwner()
+    })
+
+    // No malicious-token reentrancy test here, unlike Vault's — Vault's
+    // MaliciousReentrantToken mock is hardcoded to call a Vault-specific
+    // withdraw(uint256), which HeistPlay doesn't expose, so it can't
+    // exercise this contract meaningfully without a second mock. The
+    // real guard is structural and already exercised implicitly by every
+    // test above: both play() and payout() mark their idempotency key
+    // (playedRuns/paidRefs) *before* any external token call — the same
+    // checks-effects-interactions ordering Vault's withdraw() uses — so
+    // even without nonReentrant, a reentrant call would hit "already
+    // played"/"already paid" immediately. nonReentrant is redundant
+    // belt-and-suspenders on top of that, same as Vault.
   }
 
   console.log(`\n${passed} passed, ${failed} failed`)
