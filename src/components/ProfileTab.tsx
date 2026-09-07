@@ -1,11 +1,11 @@
 'use client'
 
-import { useIdentityToken, useLogout, usePrivy } from '@privy-io/react-auth'
+import { useLogout, usePrivy } from '@privy-io/react-auth'
 import { useCallback, useEffect, useState } from 'react'
 import { theme } from '@/design/theme'
 import { ESCAPE_AT } from '@/game/heistRun'
-import { disconnect as disconnectWallet, getIdentity, setIdentity, type Identity } from '@/game/identity'
-import { claimUsername, ENTRY_FEE_USDG, getBestDay, getStats, getTicketsToday, getUsername, reconcileIdentity, setUsername, snapshotActive, type ProfileStats } from '@/game/profile'
+import { disconnect as disconnectWallet, getIdentity, onIdentityChange, type Identity } from '@/game/identity'
+import { claimUsername, ENTRY_FEE_USDG, getBestDay, getStats, getTicketsToday, getUsername, setUsername, type ProfileStats } from '@/game/profile'
 
 const pal = theme.palette
 const BODY = theme.type.size.body
@@ -14,8 +14,7 @@ const FEED = theme.type.size.feed
 const row = { display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${pal.chrome}` } as const
 
 export default function ProfileTab() {
-  const { ready, authenticated, login } = usePrivy()
-  const { identityToken } = useIdentityToken()
+  const { ready, login } = usePrivy()
   const { logout: privyLogout } = useLogout()
 
   const [name, setName] = useState('')
@@ -27,8 +26,6 @@ export default function ProfileTab() {
   const [tickets, setTickets] = useState(0)
   const [bestDay, setBestDay] = useState(0)
   const [identity, setLocalIdentity] = useState<Identity | null>(null)
-  const [syncing, setSyncing] = useState(false)
-  const [syncError, setSyncError] = useState<string | null>(null)
 
   const refresh = useCallback(() => {
     const existing = getUsername()
@@ -43,48 +40,13 @@ export default function ProfileTab() {
 
   useEffect(() => {
     refresh()
+    return onIdentityChange(refresh) // AuthSync.tsx does the actual sync; this just re-renders when it lands
   }, [refresh])
-
-  // Privy has verified the login (email or wallet) — exchange its identity
-  // token for our own session cookie, then reconcile local/server state.
-  // See DECISIONS.md P2: this is the one place a Privy login becomes a
-  // HEIST identity; every write elsewhere trusts the cookie this sets, not
-  // any address the client claims.
-  useEffect(() => {
-    if (!ready || !authenticated || !identityToken) return
-    if (getIdentity()) return
-    let cancelled = false
-    ;(async () => {
-      setSyncing(true)
-      setSyncError(null)
-      try {
-        const guestSnapshot = snapshotActive() // must run before identity switches
-        const res = await fetch('/api/auth/privy', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ identityToken }),
-        })
-        const data = (await res.json().catch(() => ({}))) as { address?: string; error?: string }
-        if (!res.ok || !data.address) throw new Error(data.error ?? 'Could not sign in.')
-        if (cancelled) return
-        const id: Identity = { address: data.address, source: 'privy' }
-        setIdentity(id)
-        await reconcileIdentity(id, guestSnapshot)
-        if (!cancelled) refresh()
-      } catch (err) {
-        if (!cancelled) setSyncError(err instanceof Error ? err.message : 'Could not sign in.')
-      } finally {
-        if (!cancelled) setSyncing(false)
-      }
-    })()
-    return () => { cancelled = true }
-  }, [ready, authenticated, identityToken, refresh])
 
   const disconnect = () => {
     disconnectWallet()
     void fetch('/api/auth/logout', { method: 'POST' })
     void privyLogout()
-    refresh()
   }
 
   const claim = async () => {
@@ -127,10 +89,9 @@ export default function ProfileTab() {
         </div>
       ) : (
         <>
-          <button onClick={() => login()} disabled={!ready || syncing} style={{ ...buttonStyle, opacity: !ready || syncing ? 0.5 : 1 }}>
-            {syncing ? 'CONNECTING…' : 'CONNECT'}
+          <button onClick={() => login()} disabled={!ready} style={{ ...buttonStyle, opacity: !ready ? 0.5 : 1 }}>
+            CONNECT
           </button>
-          {syncError && <p style={{ color: pal.sirenRed, fontSize: FEED, marginTop: 4 }}>{syncError}</p>}
           <p style={{ color: pal.concrete, fontSize: FEED, marginTop: 4 }}>
             Email or wallet — either way you get one address. PLAY, tickets, bonus and loot all need
             this; DEMO doesn&apos;t. Progress below is local to this browser until you connect.

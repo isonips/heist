@@ -20,6 +20,21 @@ export function getIdentity(): Identity | null {
   }
 }
 
+// The one Privy->session sync effect lives in AuthSync.tsx, mounted once
+// at the root — not in every tab that cares about identity (ProfileTab,
+// HeistGame's PLAY gate, MyHaulTab). Those components need to notice when
+// AuthSync (or disconnect()) changes it, hence this tiny pub-sub — same
+// shape as feedBus.ts's listener set, for the same reason: no state
+// library is worth pulling in for "a few components re-render when one
+// value changes."
+type Listener = (identity: Identity | null) => void
+const listeners = new Set<Listener>()
+
+export function onIdentityChange(fn: Listener): () => void {
+  listeners.add(fn)
+  return () => listeners.delete(fn)
+}
+
 export function setIdentity(identity: Identity | null): void {
   if (typeof window === 'undefined') return
   try {
@@ -28,6 +43,7 @@ export function setIdentity(identity: Identity | null): void {
   } catch {
     // unavailable
   }
+  listeners.forEach((fn) => fn(identity))
 }
 
 export function disconnect(): void {

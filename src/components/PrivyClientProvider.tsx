@@ -10,6 +10,7 @@
 // that hasn't configured Privy yet.
 import { PrivyProvider } from '@privy-io/react-auth'
 import type { ReactNode } from 'react'
+import AuthSync from './AuthSync'
 
 export default function PrivyClientProvider({ children }: { children: ReactNode }) {
   const appId = process.env.NEXT_PUBLIC_PRIVY_APP_ID
@@ -24,6 +25,7 @@ export default function PrivyClientProvider({ children }: { children: ReactNode 
         appearance: { theme: 'dark' },
       }}
     >
+      <AuthSync />
       {children}
     </PrivyProvider>
   )

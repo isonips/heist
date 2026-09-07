@@ -6,9 +6,9 @@
 // haulStore (local, per-browser) is shown for a guest as a rough preview
 // only — the real, address-scoped, mint-ready record only exists once
 // connected.
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { theme } from '@/design/theme'
-import { getIdentity } from '@/game/identity'
+import { getIdentity, onIdentityChange } from '@/game/identity'
 import { getHaul } from '@/game/haulStore'
 
 const pal = theme.palette
@@ -23,12 +23,12 @@ export default function MyHaulTab() {
   const [localCount, setLocalCount] = useState(0)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
+  const load = useCallback(() => {
     const identity = getIdentity()
     setConnected(Boolean(identity))
     const counts = getHaul()
     setLocalCount(Object.values(counts).reduce((a, b) => a + b, 0))
-    if (!identity) return
+    if (!identity) return undefined
     let cancelled = false
     fetch('/api/haul')
       .then((res) => res.json())
@@ -40,6 +40,12 @@ export default function MyHaulTab() {
       .catch(() => { if (!cancelled) setError('Could not load your haul.') })
     return () => { cancelled = true }
   }, [])
+
+  useEffect(() => {
+    const cleanup = load()
+    const unsubscribe = onIdentityChange(load)
+    return () => { cleanup?.(); unsubscribe() }
+  }, [load])
 
   return (
     <div style={{ fontFamily: theme.type.family, color: pal.pale, fontSize: BODY, lineHeight: theme.type.lineHeight.read }}>

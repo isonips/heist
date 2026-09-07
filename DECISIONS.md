@@ -1099,3 +1099,43 @@ not skipped — recorded here as still outstanding, to be done (by me, if
 this sandbox gains reach, or by you) before any real deployment, which
 in any case waits for you regardless.
 
+## P1 — DEMO/PLAY gating, and a fix to where the Privy↔session sync ran
+
+**The Privy→session sync moved out of `ProfileTab.tsx` into a new
+`AuthSync.tsx`, mounted once at the root (inside `PrivyClientProvider`).**
+It used to run only while the PROFILE tab was mounted — meaning a login
+triggered from anywhere else (PLAY's new wallet gate, below) would
+authenticate with Privy but never actually get exchanged for HEIST's own
+session cookie, since nothing was listening. This was a real bug latent
+in the P2 commit, only surfaced now that something else needs to trigger
+a login. `identity.ts` grew a small pub-sub (`onIdentityChange`, same
+shape as `feedBus.ts`'s listener set) so `ProfileTab`, `MyHaulTab`, and
+`HeistGame` can each react when `AuthSync` lands an identity, without
+needing a shared state library.
+
+**PLAY requires a connected wallet; DEMO never does — "pas de porte
+dérobée" means the check has to be at the one place a run actually
+starts, not sprinkled at the UI layer.** `HeistGame.tsx`'s `startMode()`
+is that place — every route to a `'play'` run goes through it. Clicking
+PLAY without an identity calls Privy's `login()` and returns *without*
+building a run; `pendingPlayRef` remembers to actually start once
+`AuthSync` lands one (via `onIdentityChange`), so a player never needs to
+click PLAY twice. `restart()` (the RUN AGAIN button) re-checks the same
+gate for a non-demo run — covers the edge case of disconnecting (via
+PROFILE) mid-session and hitting RUN AGAIN, which would otherwise have
+kept a `'play'`-mode run going with no identity attached to it. Clicking
+the PROFILE tab itself now also opens Privy's login immediately when
+disconnected (`page.tsx`'s `changeTab`), rather than only showing a
+CONNECT button after arriving — matches "cliquer sur PLAY ou PROFILE
+ouvre la connexion wallet" for both entry points.
+
+**Not verified live from this sandbox.** The three secrets are now set in
+Vercel per your message, but this sandbox's network block (still present
+— re-confirmed this round) means I can't open the deployed app in a real
+browser to click through PLAY→login→run myself. `npx tsc --noEmit`,
+`npx eslint --max-warnings=0`, and `npm run build` are all clean, and the
+determinism harness still passes (unaffected — no engine change), but
+that's static/build-time verification, not the real click-through this
+task is ultimately supposed to confirm. Asking you to smoke-test PLAY and
+PROFILE once this is deployed is the fastest real check.
+

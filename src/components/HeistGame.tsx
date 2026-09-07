@@ -1,11 +1,13 @@
 'use client'
 
+import { usePrivy } from '@privy-io/react-auth'
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { theme } from '@/design/theme'
 import { ESCAPE_AT, H, HeistRun, OUTRO_TICKS, SCALE, TICK_MS, W, type ItemKey, type Mode } from '@/game/heistRun'
 import { buildRun } from '@/game/buildRun'
 import { postFeedEvent } from '@/game/feedBus'
 import { exportDemoLogAsFile, getDemoLog, recordDemoRun } from '@/game/demoLog'
+import { getIdentity, onIdentityChange } from '@/game/identity'
 import { recordItemEarned } from '@/game/haulStore'
 import { getUsername, recordGameResult, recordTicketWon } from '@/game/profile'
 import type { EventType } from '@/design/lines'
@@ -76,10 +78,29 @@ export default function HeistGame() {
   const nameRef = useRef<string>(getUsername() ?? `guest${Math.floor(Math.random() * 900 + 100)}`)
   const reportedRef = useRef(false)
   const [hud, setHud] = useState(() => snapshot(runRef.current))
+  const [connected, setConnected] = useState(false)
+  useEffect(() => {
+    setConnected(Boolean(getIdentity()))
+    return onIdentityChange((id) => setConnected(Boolean(id)))
+  }, [])
   const [loggedRuns, setLoggedRuns] = useState(0)
   useEffect(() => { if (demo) setLoggedRuns(getDemoLog().length) }, [demo])
 
+  // PLAY requires a connected wallet, DEMO never does — see DECISIONS.md
+  // P1. Clicking PLAY without one opens Privy's login instead of starting
+  // a run; pendingPlayRef remembers to actually start once identity lands
+  // (AuthSync.tsx does the real Privy->session exchange, elsewhere —
+  // this component just waits for its result via onIdentityChange), so a
+  // player never has to click PLAY twice.
+  const { login } = usePrivy()
+  const pendingPlayRef = useRef(false)
+
   const startMode = useCallback(async (m: 'play' | 'demo') => {
+    if (m === 'play' && !getIdentity()) {
+      pendingPlayRef.current = true
+      login()
+      return
+    }
     setMode(m)
     setReady(false)
     const run = await buildRun(m === 'demo')
@@ -87,16 +108,30 @@ export default function HeistGame() {
     reportedRef.current = false
     setHud(snapshot(run))
     setReady(true)
-  }, [])
+  }, [login])
+
+  useEffect(() => onIdentityChange((id) => {
+    if (id && pendingPlayRef.current) {
+      pendingPlayRef.current = false
+      void startMode('play')
+    }
+  }), [startMode])
 
   const restart = useCallback(async () => {
+    if (!demo && !getIdentity()) {
+      // Disconnected mid-session (e.g. via the PROFILE tab) — same gate
+      // as a fresh PLAY, not a silent continue.
+      pendingPlayRef.current = true
+      login()
+      return
+    }
     setReady(false)
     const run = await buildRun(demo)
     runRef.current = run
     reportedRef.current = false
     setHud(snapshot(run))
     setReady(true)
-  }, [demo])
+  }, [demo, login])
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -217,6 +252,11 @@ export default function HeistGame() {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center', padding: '24px 0' }}>
         <button onClick={() => void startMode('play')} style={{ ...buttonStyle, width: 200, fontSize: theme.type.size.display, padding: '14px 0' }}>PLAY</button>
+        {!connected && (
+          <p style={{ color: theme.palette.concrete, fontSize: theme.type.size.feed, margin: 0 }}>
+            wallet required — connects on click
+          </p>
+        )}
         <button onClick={() => void startMode('demo')} style={{ ...buttonStyle, width: 200, fontSize: theme.type.size.display, padding: '14px 0' }}>DEMO</button>
       </div>
     )
