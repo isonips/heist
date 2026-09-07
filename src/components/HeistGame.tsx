@@ -298,14 +298,23 @@ export default function HeistGame() {
 
   if (mode === null) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center', padding: '24px 0' }}>
-        <button onClick={() => void startMode('play')} style={{ ...buttonStyle, width: 200, fontSize: theme.type.size.display, padding: '14px 0' }}>PLAY</button>
-        {!connected && (
-          <p style={{ color: theme.palette.concrete, fontSize: theme.type.size.feed, margin: 0 }}>
-            wallet required — connects on click
-          </p>
-        )}
-        <button onClick={() => void startMode('demo')} style={{ ...buttonStyle, width: 200, fontSize: theme.type.size.display, padding: '14px 0' }}>DEMO</button>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, alignItems: 'center', padding: '24px 16px' }}>
+        <div style={{ display: 'flex', gap: 16, width: '100%', maxWidth: 460, flexWrap: 'wrap', justifyContent: 'center' }}>
+          <div style={{ flex: '1 1 200px', textAlign: 'center' }}>
+            <button onClick={() => void startMode('play')} style={{ ...buttonStyle, width: '100%', fontSize: theme.type.size.display, padding: '14px 0' }}>PLAY</button>
+            <p style={{ color: theme.palette.concrete, fontSize: theme.type.size.feed, margin: '6px 0 0' }}>
+              {connected
+                ? 'Wallet required — tickets, bonus, and loot count for real.'
+                : 'Wallet required — connects on click. Tickets, bonus, and loot count for real.'}
+            </p>
+          </div>
+          <div style={{ flex: '1 1 200px', textAlign: 'center' }}>
+            <button onClick={() => void startMode('demo')} style={{ ...buttonStyle, width: '100%', fontSize: theme.type.size.display, padding: '14px 0' }}>DEMO</button>
+            <p style={{ color: theme.palette.concrete, fontSize: theme.type.size.feed, margin: '6px 0 0' }}>
+              No wallet, no ticket, no loot — same mechanics, zero stakes, for learning the road.
+            </p>
+          </div>
+        </div>
         {startError && <p style={{ color: theme.palette.sirenRed, fontSize: theme.type.size.feed, margin: 0 }}>{startError}</p>}
       </div>
     )

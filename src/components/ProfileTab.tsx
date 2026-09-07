@@ -26,16 +26,10 @@ export default function ProfileTab() {
   const [tickets, setTickets] = useState(0)
   const [bestDay, setBestDay] = useState(0)
   const [identity, setLocalIdentity] = useState<Identity | null>(null)
-  const [draw, setDraw] = useState<{ pot: number; previous: { day: string; winnerAddress: string | null; payout: number; totalTickets: number } | null } | null>(null)
-  const [countdown, setCountdown] = useState('')
   const [codeInfo, setCodeInfo] = useState<{ lifetimeUnlocked: boolean; issuedCode: string | null } | null>(null)
   const [redeemDraft, setRedeemDraft] = useState('')
   const [redeeming, setRedeeming] = useState(false)
   const [redeemMsg, setRedeemMsg] = useState<{ ok: boolean; text: string } | null>(null)
-
-  useEffect(() => {
-    fetch('/api/draw').then((res) => res.json()).then((data) => { if (data.pot !== undefined) setDraw(data) }).catch(() => {})
-  }, [])
 
   const refreshCodes = useCallback(() => {
     if (!getIdentity()) { setCodeInfo(null); return }
@@ -74,21 +68,6 @@ export default function ProfileTab() {
       setRedeeming(false)
     }
   }
-
-  useEffect(() => {
-    const tick = () => {
-      const now = Date.now()
-      const nextMidnightUTC = Math.ceil(now / 86400000) * 86400000
-      const s = Math.max(0, Math.floor((nextMidnightUTC - now) / 1000))
-      const h = String(Math.floor(s / 3600)).padStart(2, '0')
-      const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0')
-      const sec = String(s % 60).padStart(2, '0')
-      setCountdown(`${h}:${m}:${sec}`)
-    }
-    tick()
-    const id = window.setInterval(tick, 1000)
-    return () => window.clearInterval(id)
-  }, [])
 
   const refresh = useCallback(() => {
     const existing = getUsername()
@@ -208,14 +187,6 @@ export default function ProfileTab() {
 
       <h3 style={{ color: pal.amber, fontSize: BODY, fontWeight: 700, marginTop: 16 }}>Tonight&apos;s draw</h3>
       <div style={row}>
-        <span>Pot</span>
-        <span style={{ color: pal.gold }}>{draw ? draw.pot.toFixed(2) : '—'} USDG</span>
-      </div>
-      <div style={row}>
-        <span>Draw in</span>
-        <span style={{ color: pal.gold }}>{countdown || '—'}</span>
-      </div>
-      <div style={row}>
         <span>Bonus</span>
         <span style={{ color: pal.gold }}>{stats?.bonusPct ?? 0}%</span>
       </div>
@@ -227,19 +198,11 @@ export default function ProfileTab() {
         <span>Biggest day</span>
         <span style={{ color: pal.gold }}>{bestDay}</span>
       </div>
-      {draw?.previous && (
-        <div style={row}>
-          <span>Last winner ({draw.previous.day})</span>
-          <span style={{ color: pal.gold }}>
-            {draw.previous.winnerAddress ? `${draw.previous.winnerAddress.slice(0, 6)}… — ${draw.previous.payout.toFixed(2)} USDG` : 'no tickets, rolled over'}
-          </span>
-        </div>
-      )}
       <p style={{ color: pal.concrete, fontSize: FEED, marginTop: 4 }}>
         One ticket per run that reaches {ESCAPE_AT} crossings and gets out — escape early or ride out the
         clock, the ticket is yours either way. Resets at midnight UTC. Bonus multiplies what you&apos;d
-        win at the draw: +10% per win, −20% per calendar day you don&apos;t play, 0-100%. One winner a day,
-        picked weighted by ticket count; whatever they don&apos;t collect rolls into tomorrow&apos;s pot.
+        win at the draw: +10% per win, −20% per calendar day you don&apos;t play, 0-100%. Pot, countdown,
+        and the last winner are on the DRAW tab.
       </p>
 
       {identity && (

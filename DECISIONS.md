@@ -1442,3 +1442,47 @@ Supabase dashboard or MCP) with whatever prefix marks the partner —
 `source='manual'`, `issuer_address` optional. A real admin UI/route for
 this is future work if partner codes need to be self-serve.
 
+## Deployment failure after CRON_SECRET was set — a likely cause, fixed defensively, not confirmed
+
+**The Vercel deployment failed after `CRON_SECRET` was added and the
+project redeployed — no build log was available to me (still no network
+reach to Vercel from this sandbox, and no Vercel MCP access either), so
+this is a plausible-and-fixed hypothesis, not a diagnosed-and-confirmed
+one.** The one thing that changed around when secrets got set is
+`NEXT_PUBLIC_PRIVY_APP_ID` going from unset (in this sandbox, still) to
+actually set (in Vercel) — and that flips `PrivyClientProvider` from a
+plain passthrough to actually rendering `<PrivyProvider>`. That
+component is `'use client'`, but `'use client'` doesn't stop Next.js
+from running it once during the server-side pass that produces the
+initial HTML (SSR/static prerendering) — it only adds client-side
+hydration on top. Privy's SDK does browser-only setup (storage, crypto)
+that has no business executing during that server pass, and a crash
+there is exactly the class of failure a local build in an environment
+that never had the App ID set could never have caught.
+
+**Fix: `PrivyClientProvider.tsx` now gates the real `<PrivyProvider>`
+behind a `mounted` state, set `true` only inside a client-only
+`useEffect`.** Before that fires (server render, and the first client
+render before hydration effects run), it renders `{children}` directly
+— the rest of the page's SSR/static output is completely unaffected,
+only Privy's own provider is deferred to strictly-after-hydration,
+client-only. `usePrivy()` and friends elsewhere in the tree already
+tolerate "no provider" (confirmed earlier this session — the build
+doesn't crash when the hooks are called without one), so the brief
+window before the effect fires isn't a functional gap.
+
+**Deliberately not the alternative fix** (`next/dynamic(...,
+{ssr:false})` around the whole provider from `layout.tsx`) — tried
+first, reverted: that would stop the *entire app* from rendering on the
+server (everything is inside `PrivyClientProvider`'s `{children}`),
+turning the initial page load into a blank shell until JS hydrates.
+The mounted-gate keeps SSR/static output identical for everything except
+Privy's own internals.
+
+**If this wasn't the actual cause, the deployment will fail again in the
+same way** — the fastest path from here is the literal error text from
+Vercel's build log (Deployments → the failed one → Build Logs), which
+this sandbox cannot fetch itself. Asked for it; proceeding with other
+work in parallel rather than blocking on it, since this fix is a real
+improvement regardless of whether it was the actual cause.
+

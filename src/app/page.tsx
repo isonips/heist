@@ -6,6 +6,7 @@ import WindowChrome, { type TabId } from '@/components/WindowChrome'
 import HeistGame from '@/components/HeistGame'
 import RulesTab from '@/components/RulesTab'
 import MyHaulTab from '@/components/MyHaulTab'
+import DrawTab from '@/components/DrawTab'
 import ProfileTab from '@/components/ProfileTab'
 import FeedWindow from '@/components/FeedWindow'
 import SplashScreen from '@/components/SplashScreen'
@@ -36,6 +37,7 @@ export default function Home() {
         {tab === 'play' && <HeistGame key="play" />}
         {tab === 'rules' && <RulesTab />}
         {tab === 'haul' && <MyHaulTab />}
+        {tab === 'draw' && <DrawTab />}
         {tab === 'profile' && <ProfileTab />}
       </WindowChrome>
       <FeedWindow />
