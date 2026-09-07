@@ -9,7 +9,7 @@ import { postFeedEvent } from '@/game/feedBus'
 import { exportDemoLogAsFile, getDemoLog, recordDemoRun } from '@/game/demoLog'
 import { getIdentity, onIdentityChange } from '@/game/identity'
 import { recordItemEarned } from '@/game/haulStore'
-import { getUsername, recordGameResult, recordTicketWon } from '@/game/profile'
+import { applyPlayResult, getUsername } from '@/game/profile'
 import type { EventType } from '@/design/lines'
 import PixelIcon from './PixelIcon'
 import ResponsiveScale from './ResponsiveScale'
@@ -94,6 +94,35 @@ export default function HeistGame() {
   // player never has to click PLAY twice.
   const { login } = usePrivy()
   const pendingPlayRef = useRef(false)
+  // The signed ticket /api/play/start issued for the run currently in
+  // runRef — carried through to /api/play/finish at the end (see
+  // DECISIONS.md P5). null for DEMO, which never touches either route.
+  const ticketRef = useRef<string | null>(null)
+  const [startError, setStartError] = useState<string | null>(null)
+
+  // Fetches a fresh seed + drop rolls + signed ticket from the server and
+  // builds the engine from exactly those — PLAY never picks its own seed
+  // or decides its own drops (P5). Returns false (leaving `mode`/`ready`
+  // untouched) if the request fails, so a network hiccup doesn't strand
+  // the player on a half-built run.
+  const buildPlayRun = useCallback(async (): Promise<boolean> => {
+    let data: { ticket?: string; seed?: number; paintingHit?: boolean; itemHits?: Record<ItemKey, boolean>; error?: string }
+    try {
+      const res = await fetch('/api/play/start', { method: 'POST' })
+      data = await res.json()
+      if (!res.ok || !data.ticket) throw new Error(data.error ?? 'Could not start a run.')
+    } catch (err) {
+      setStartError(err instanceof Error ? err.message : 'Could not start a run.')
+      return false
+    }
+    setStartError(null)
+    ticketRef.current = data.ticket
+    const run = await buildRun(false, data.seed, { paintingHit: data.paintingHit!, itemHits: data.itemHits! })
+    runRef.current = run
+    reportedRef.current = false
+    setHud(snapshot(run))
+    return true
+  }, [])
 
   const startMode = useCallback(async (m: 'play' | 'demo') => {
     if (m === 'play' && !getIdentity()) {
@@ -103,12 +132,17 @@ export default function HeistGame() {
     }
     setMode(m)
     setReady(false)
-    const run = await buildRun(m === 'demo')
-    runRef.current = run
-    reportedRef.current = false
-    setHud(snapshot(run))
+    if (m === 'play') {
+      const ok = await buildPlayRun()
+      if (!ok) { setMode(null); setReady(true); return }
+    } else {
+      const run = await buildRun(true)
+      runRef.current = run
+      reportedRef.current = false
+      setHud(snapshot(run))
+    }
     setReady(true)
-  }, [login])
+  }, [login, buildPlayRun])
 
   useEffect(() => onIdentityChange((id) => {
     if (id && pendingPlayRef.current) {
@@ -126,12 +160,17 @@ export default function HeistGame() {
       return
     }
     setReady(false)
-    const run = await buildRun(demo)
-    runRef.current = run
-    reportedRef.current = false
-    setHud(snapshot(run))
+    if (demo) {
+      const run = await buildRun(true)
+      runRef.current = run
+      reportedRef.current = false
+      setHud(snapshot(run))
+    } else {
+      const ok = await buildPlayRun()
+      if (!ok) { setMode(null); setReady(true); return }
+    }
     setReady(true)
-  }, [demo, login])
+  }, [demo, login, buildPlayRun])
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -187,17 +226,26 @@ export default function HeistGame() {
         reportedRef.current = true
         if (run.state.mode === 'paid') {
           const earned = [...run.usedItemsThisRun, ...(run.state.heldItem ? [run.state.heldItem] : [])]
-          earned.forEach((item) => recordItemEarned(item, run.seed, run.runId))
+          earned.forEach((item) => recordItemEarned(item)) // local cache only — see haulStore.ts
         }
         if (!demo) {
-          recordGameResult({
-            won: run.state.mode === 'paid',
-            crossings: run.state.crossed,
-            walletKept: run.state.mode === 'paid' && (run.state.hands === 'wallet' || run.state.hands === 'both'),
-            walletPayout: run.state.walletOutcome === 'nothing' ? 0 : run.state.walletOutcome === 'refund' ? run.state.walletAmount : run.state.walletOutcome === 'double' ? run.state.walletAmount * 2 : 0,
-            paintingKept: run.state.mode === 'paid' && (run.state.hands === 'painting' || run.state.hands === 'both'),
-          })
-          if (run.state.mode === 'paid') recordTicketWon()
+          // The authoritative record: replay-verified server-side, not
+          // anything reported from this client run — see DECISIONS.md
+          // P5. ticketRef.current is the ticket /api/play/start issued
+          // for this exact run; actionLog is what actually happened.
+          const ticket = ticketRef.current
+          if (ticket) {
+            void fetch('/api/play/finish', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ticket, actions: run.actionLog }),
+            })
+              .then((res) => res.json())
+              .then((data: { stats?: Parameters<typeof applyPlayResult>[0]; ticketsToday?: number }) => {
+                if (data.stats && data.ticketsToday !== undefined) applyPlayResult(data.stats, data.ticketsToday)
+              })
+              .catch(() => {})
+          }
         }
         if (demo) {
           const total = recordDemoRun({
@@ -258,6 +306,7 @@ export default function HeistGame() {
           </p>
         )}
         <button onClick={() => void startMode('demo')} style={{ ...buttonStyle, width: 200, fontSize: theme.type.size.display, padding: '14px 0' }}>DEMO</button>
+        {startError && <p style={{ color: theme.palette.sirenRed, fontSize: theme.type.size.feed, margin: 0 }}>{startError}</p>}
       </div>
     )
   }

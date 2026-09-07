@@ -1166,3 +1166,136 @@ block); this is the fix from reading the actual Privy SDK types and
 reasoning through the timing, not from watching it fail and retrying —
 worth a second real smoke test once redeployed.
 
+## P5 — Server-authoritative PLAY: seed, drops, replay verification, ledger
+
+**New flow for a real PLAY run:** `POST /api/play/start` (session
+required) rolls the seed and every mystery-item/painting drop
+server-side (the same `roll_global_drop()` RPC as before, just called
+from the server instead of the client — see `src/lib/globalDropsServer.ts`),
+signs all of it into a ticket (`src/lib/playTicket.ts`, HMAC over
+`{address, seed, runId, paintingHit, itemHits, exp}`, 10-minute TTL,
+`SESSION_SECRET`-keyed but namespace-separated from session cookies by a
+`play:` prefix in the signed payload), and hands the ticket plus the
+already-decided facts back to the client so it can render the run
+locally in real time (`buildRun.ts` now accepts a `preRolled` param and
+skips its own RPC calls when given one). At the end of the run, the
+client posts the ticket and `run.actionLog` to `POST /api/play/finish`,
+which decodes seed/runId/drops from the ticket's *signature* — never
+from the request body — and calls `replay(seed, actions, ...)` (the same
+pure function the determinism harness runs 200 seeds through) to get the
+authoritative outcome. Nothing about payout, stats, tickets, or the haul
+is ever read from what the client claims about how its own run went.
+
+**Why the seed/drops had to move server-side, not just gain a
+signature-check at the end:** the wallet outcome/amount roll is entirely
+seed-derived (deterministic, `replay()` reproduces it exactly), but
+mystery-item and painting drops are *external* facts (a real atomic
+counter increment via `roll_global_drop()`) that `replay()` has no way to
+independently re-derive after the fact — it can only reproduce what
+`paintingRoll`/`itemRoll` callbacks it's given say happened. If the
+client still rolled its own drops and just told the server what they
+were, the server would have no way to tell a real roll from a fabricated
+"I got the safe" claim. Moving the roll itself server-side, before the
+run even starts, and signing the result into the ticket, closes that —
+`replay()`'s signature grew an optional `itemRoll` parameter to make this
+possible (additive, existing callers unaffected — determinism harness
+still passes 200/200 after this change).
+
+**Idempotent on `runId`, at two layers.** `play_results` (keyed by
+`run_id`) is both the retry-safe response cache (a repeated `finish()`
+call for the same run returns the cached result instead of reprocessing)
+and a real, replay-verified record of every game — useful later for P11
+(comparing human runs to the bots) since it's the actual verified
+outcome, not a client's report of one. The `ledger` table's `unique
+(reason, ref)` constraint is the actual guarantee under a race (two
+`finish()` calls for the same run hitting the DB at once): the first
+`ledger` insert (`reason='play'`) is attempted before any other write,
+and a `23505` (unique violation) on it is the signal "already processed"
+— the `play_results` check is the fast path, this is the guarantee.
+
+**Ledger is immutable, append-only, balance-by-sum.** `{address, delta,
+reason, ref, ts}`, `reason` constrained to `play | loot | prize | deposit
+| withdraw`. No update/delete path exists for it, anywhere. `PLAY_PRICE_USDG`
+(currently 0, see `src/game/economy.ts`) is the `play` row's (negative)
+delta — the plumbing writes a real ledger row for every game today, at
+zero cost, ready for the moment P7/the Vault contract makes it real. The
+wallet payout amount (`loot` reason) is unchanged from the existing
+nothing/refund/double mechanic — this round did *not* touch the P3
+calibration question (still unresolved, still flagged, see
+`CALIBRATION.md`), it only made the existing amounts flow through a real
+ledger instead of a client-only "points" number.
+
+**P6 (haul) tightened at the same time:** `/api/haul/record` (session-only,
+client-claimed itemType/seed/runId — a real gap under P5's own standard)
+is deleted. `/api/play/finish` now writes `haul_items` itself, from
+`result.usedItemsThisRun`/`result.heldItem` (added to the `Result` type
+this round — `usedItemsThisRun` wasn't exposed before), which are
+server-verified facts, not client claims. `haulStore.ts` (the local
+per-browser count DEMO and guests still see) lost its server-push
+entirely — it's local cache only now, which is all it ever should have
+been once a real server path existed.
+
+**RLS on `profiles`/`stats`/`tickets_daily` is locked down** — the gap
+flagged earlier this session (anon could `INSERT`/`UPDATE` any row) is
+closed: those policies are dropped, `SELECT` stays public (feed/leaderboard
+reads, unchanged). This was sequenced deliberately behind removing every
+remaining client-side write first (confirmed via a repo-wide grep before
+touching RLS) — `profile.ts`'s `reconcileIdentity()` used to `insert()` a
+fresh row on a first-time connect; that's gone too (see below), so
+nothing was left depending on the anon-write policies by the time they
+were dropped. Verified via `get_advisors`: the only remaining findings
+are the two already-documented, intentional ones (the new
+service-role-only tables showing "RLS enabled, no policy" — correct,
+that's the point — and `roll_global_drop`'s anon-callable
+`SECURITY DEFINER`, expected since an earlier round).
+
+**`profile.ts`'s "claim guest stats on first connect" behavior is
+removed, not just deferred.** It used to copy a guest's local
+pre-connect stats onto the server as that address's first row. Under P1
+(PLAY requires a connection before it can even start), a guest can no
+longer accumulate real PLAY stats before connecting — DEMO never touched
+`stats` either (`if (!demo)` gated it) — so the only way guest stats
+could ever be non-zero was stale localStorage predating this session's
+P1 change. Keeping a "trust the client's claimed guest stats" write path
+for a case that can no longer legitimately happen would be exactly the
+kind of client-trusting write P5 exists to eliminate (a guest could
+otherwise inflate fake stats locally before ever connecting). Local
+continuity for a first-time connect is preserved cosmetically
+(`reconcileIdentity` still copies the guest snapshot into the
+address-scoped *local* cache) — nothing server-side depends on it, and
+the first real `/api/play/finish` creates the actual row.
+
+**Not done, flagged for later, not silently skipped:** atomicity across
+the sequence of writes in `/api/play/finish` (ledger → haul → tickets →
+stats → play_results) is "each step idempotent-safe on retry," not "one
+database transaction" — a real transaction would need this logic to live
+in a Postgres function (like `roll_global_drop`), which isn't practical
+here since `replay()` is the actual game engine in TypeScript, not
+something to reimplement in PL/pgSQL. A partial failure mid-sequence
+means "some but not all of this run's effects landed," recoverable by a
+retry (each individual write is itself idempotent) but not instantaneously
+atomic. Acceptable at this stage, worth revisiting before real money is
+on the line.
+
+## P4 — Bonus, ticket (server-authoritative foundation)
+
+**Bonus is a `stats.bonus_pct` column (0-100, integer), written only by
+`/api/play/finish`.** Decay ("-20% per calendar day without playing") is
+computed lazily against `stats.updated_at` (the previous play) at the
+next play, not by a scheduled job — there's no cron in this codebase yet,
+and lazy decay is exactly as correct (the stored value only has to be
+right *when read*, and every read of it happens either right after a
+write or via a fresh server round-trip) without needing one. `+10%` on a
+win, applied after decay, capped at 100 — matches the brief exactly.
+Ticket issuance (`tickets_daily`, one per win regardless of escape vs.
+held-to-end) moved from a client anon-key upsert to the same route.
+
+**Not done this round, and it's the bigger lift:** the daily draw itself
+(weighted-by-ticket winner selection, pot/rollover, a scheduled,
+reproducible trigger) and the codes system (10-wins unlock, referral,
+manual attribution). Both need real design decisions of their own
+(exact draw mechanics, how a Vercel Cron or Supabase scheduled function
+actually fires it, what "reproducible with the same seed" means for a
+winner-selection RNG) that weren't reached this session — see the
+session's final punch-list.
+

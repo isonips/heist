@@ -145,6 +145,10 @@ export default function ProfileTab() {
 
       <h3 style={{ color: pal.amber, fontSize: BODY, fontWeight: 700, marginTop: 16 }}>Tonight&apos;s draw</h3>
       <div style={row}>
+        <span>Bonus</span>
+        <span style={{ color: pal.gold }}>{stats?.bonusPct ?? 0}%</span>
+      </div>
+      <div style={row}>
         <span>Tickets earned today</span>
         <span style={{ color: pal.gold }}>{tickets}</span>
       </div>
@@ -154,7 +158,8 @@ export default function ProfileTab() {
       </div>
       <p style={{ color: pal.concrete, fontSize: FEED, marginTop: 4 }}>
         One ticket per run that reaches {ESCAPE_AT} crossings and gets out — escape early or ride out the
-        clock, the ticket is yours either way. Resets at midnight UTC.
+        clock, the ticket is yours either way. Resets at midnight UTC. Bonus multiplies what you&apos;d
+        win at the draw: +10% per win, −20% per calendar day you don&apos;t play, 0-100%.
       </p>
 
       <h3 style={{ color: pal.amber, fontSize: BODY, fontWeight: 700, marginTop: 16 }}>Stats</h3>

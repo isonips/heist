@@ -4,16 +4,17 @@
 // actually kept the loot (survived with it) — matching the same rule as the
 // loot itself: escaping forfeits it, so it was never really kept.
 //
-// P1: the server (Supabase, see DECISIONS.md P1) is authoritative once an
-// address is connected. localStorage stays as the fast local cache reads
-// always go through — reconcileIdentity() pulls the server's record into it
-// once, at connect time ("réconcilié au chargement"), and every write here
-// pushes to the server too (fire-and-forget — a slow/failed network call
-// should never block the local write or the UI). Guests (no address) have
-// nothing to key a server row by, so they stay local-only, same as always.
-// When Supabase isn't configured (no env vars — local dev, or a deployment
-// that hasn't set them), every push is a no-op and reconcileIdentity() falls
-// back to the original local-only claim behavior — see getSupabase().
+// P5: the server is the only thing that writes stats/tickets/bonus now —
+// /api/play/finish computes and stores them from a replay-verified
+// outcome (see DECISIONS.md P5), never from a client's own account of how
+// its run went. This file's job shrank to match: it's a local read cache
+// (instant UI, no round-trip to show your own stats) that gets written
+// from a server response (applyPlayResult, called right after a
+// successful /api/play/finish) or read from the server at connect time
+// (reconcileIdentity) — it never originates a write to profiles/stats/
+// tickets_daily itself anymore. Guests (no address) can't play PLAY at
+// all (P1's wallet gate), so they never have real stats to begin with;
+// what's here for them is vestigial display state only.
 import { getSupabase } from '@/lib/supabase'
 import { getIdentity, type Identity } from './identity'
 
@@ -33,17 +34,18 @@ export type ProfileStats = {
   walletsStolen: number
   walletWinningsTotal: number
   paintingsStolen: number
+  bonusPct: number
 }
 
 function emptyStats(): ProfileStats {
-  return { gamesPlayed: 0, gamesWon: 0, totalCrossings: 0, walletsStolen: 0, walletWinningsTotal: 0, paintingsStolen: 0 }
+  return { gamesPlayed: 0, gamesWon: 0, totalCrossings: 0, walletsStolen: 0, walletWinningsTotal: 0, paintingsStolen: 0, bonusPct: 0 }
 }
 
 /** Every read/write in this file goes through this — the guest bucket
  *  (no suffix, same keys this file always used) when nothing's connected,
  *  an address-scoped bucket once something is. Callers never see the
- *  difference: getStats()/recordGameResult()/etc. don't take an identity
- *  argument, they just read whichever bucket is currently active. */
+ *  difference: getStats()/etc. don't take an identity argument, they just
+ *  read whichever bucket is currently active. */
 function scoped(base: string): string {
   const identity = getIdentity()
   return identity ? `${base}::${identity.address}` : base
@@ -62,35 +64,6 @@ function readJson<T>(key: string): T | null {
 function writeJson(key: string, value: unknown): void {
   if (typeof window === 'undefined') return
   try { window.localStorage.setItem(key, JSON.stringify(value)) } catch { /* unavailable */ }
-}
-
-// ---------------------------------------------------------- server pushes
-// Fire-and-forget: a swallowed rejection here means this write only made it
-// as far as the local cache this time, which is exactly the point of a
-// cache the server reconciles later rather than a strict two-phase commit.
-// (Username has no push here — claimUsername() above writes it through the
-// session API instead, which is the only path that can enforce permanence
-// and uniqueness; stats/tickets aren't security-sensitive the same way and
-// keep the direct-write cache pattern until P5 replaces it.)
-function pushStats(address: string, stats: ProfileStats) {
-  const supabase = getSupabase()
-  if (!supabase) return
-  void supabase.from('stats').upsert({
-    address,
-    games_played: stats.gamesPlayed,
-    games_won: stats.gamesWon,
-    total_crossings: stats.totalCrossings,
-    wallets_stolen: stats.walletsStolen,
-    wallet_winnings_total: stats.walletWinningsTotal,
-    paintings_stolen: stats.paintingsStolen,
-    updated_at: new Date().toISOString(),
-  }).then(() => {})
-}
-
-function pushTicketsToday(address: string, day: string, count: number) {
-  const supabase = getSupabase()
-  if (!supabase) return
-  void supabase.from('tickets_daily').upsert({ address, day, count }).then(() => {})
 }
 
 export function getUsername(): string | null {
@@ -136,32 +109,6 @@ export function getStats(): ProfileStats {
   return { ...emptyStats(), ...(readJson<Partial<ProfileStats>>(scoped(STATS_BASE)) ?? {}) }
 }
 
-function saveStats(stats: ProfileStats) {
-  writeJson(scoped(STATS_BASE), stats)
-  const identity = getIdentity()
-  if (identity) pushStats(identity.address, stats)
-}
-
-export function recordGameResult(opts: {
-  won: boolean
-  crossings: number
-  walletKept: boolean
-  walletPayout: number
-  paintingKept: boolean
-}): ProfileStats {
-  const stats = getStats()
-  stats.gamesPlayed += 1
-  if (opts.won) stats.gamesWon += 1
-  stats.totalCrossings += opts.crossings
-  if (opts.walletKept) {
-    stats.walletsStolen += 1
-    stats.walletWinningsTotal += opts.walletPayout
-  }
-  if (opts.paintingKept) stats.paintingsStolen += 1
-  saveStats(stats)
-  return stats
-}
-
 function todayKey(): string {
   return new Date().toISOString().slice(0, 10) // YYYY-MM-DD, UTC
 }
@@ -171,10 +118,6 @@ type TicketState = { date: string; count: number; bestDay: number }
 function loadTickets(): TicketState {
   const parsed = readJson<Partial<TicketState>>(scoped(TICKETS_BASE))
   return { date: parsed?.date ?? todayKey(), count: parsed?.count ?? 0, bestDay: parsed?.bestDay ?? 0 }
-}
-
-function saveTickets(state: TicketState) {
-  writeJson(scoped(TICKETS_BASE), state)
 }
 
 /** Tickets earned today (the nightly draw resets it — 0 once the date rolls over). */
@@ -188,15 +131,16 @@ export function getBestDay(): number {
   return loadTickets().bestDay
 }
 
-export function recordTicketWon(): number {
-  const state = loadTickets()
+/** Call right after a successful POST /api/play/finish — writes the
+ *  server's authoritative stats/bonus/ticket count into the local cache
+ *  so the UI updates instantly without a second round-trip. This is the
+ *  *only* place stats/tickets get written locally anymore; there is no
+ *  optimistic client-side increment path left (see file header, P5). */
+export function applyPlayResult(stats: ProfileStats, ticketsToday: number): void {
+  writeJson(scoped(STATS_BASE), stats)
   const today = todayKey()
-  const count = state.date === today ? state.count + 1 : 1
-  const bestDay = Math.max(state.bestDay, count)
-  saveTickets({ date: today, count, bestDay })
-  const identity = getIdentity()
-  if (identity) pushTicketsToday(identity.address, today, count)
-  return count
+  const bestDay = Math.max(getBestDay(), ticketsToday)
+  writeJson(scoped(TICKETS_BASE), { date: today, count: ticketsToday, bestDay })
 }
 
 function writeUsernameLocal(suffix: string, username: string) {
@@ -212,18 +156,19 @@ function statsFromRow(row: Record<string, unknown>): ProfileStats {
     walletsStolen: Number(row.wallets_stolen) || 0,
     walletWinningsTotal: Number(row.wallet_winnings_total) || 0,
     paintingsStolen: Number(row.paintings_stolen) || 0,
+    bonusPct: Number(row.bonus_pct) || 0,
   }
 }
 
-/** Call right after a successful connect. Server configured: the server is
- *  authoritative — a returning address's existing record (profile, stats,
- *  every daily ticket row) is pulled down and overwrites the local cache
- *  outright; a first-time address has nothing to pull, so the guest
- *  session's progress up to this moment is written to the server once
- *  (claiming it) as well as kept locally. No server configured: falls back
- *  to the original local-only behavior — a returning address's local
- *  record (if this browser has seen it before) wins over the guest bucket;
- *  otherwise the guest snapshot is copied in the same way. */
+/** Call right after a successful connect — pulls the server's record (if
+ *  this address has one) into the local cache. Read-only: it never writes
+ *  to the server (see file header — a guest's pre-connect local progress
+ *  is never "claimed" onto a server row anymore, since PLAY itself now
+ *  requires being connected, so there's no real pre-connect PLAY history
+ *  to claim; a first-time address' local cache is just left as the guest
+ *  snapshot for continuity, purely cosmetic until a real server-verified
+ *  game writes something authoritative). No server configured: same
+ *  fallback idea, local-only. */
 export async function reconcileIdentity(identity: Identity, guestSnapshot: { username: string | null; stats: ProfileStats; tickets: TicketState }): Promise<void> {
   const suffix = `::${identity.address}`
   const supabase = getSupabase()
@@ -232,7 +177,6 @@ export async function reconcileIdentity(identity: Identity, guestSnapshot: { use
     const hasLocalRecord = readJson(STATS_BASE + suffix) !== null || readJson(TICKETS_BASE + suffix) !== null ||
       (typeof window !== 'undefined' && window.localStorage.getItem(USERNAME_BASE + suffix) !== null)
     if (hasLocalRecord) return
-    if (guestSnapshot.username) writeUsernameLocal(suffix, guestSnapshot.username)
     writeJson(STATS_BASE + suffix, guestSnapshot.stats)
     writeJson(TICKETS_BASE + suffix, guestSnapshot.tickets)
     return
@@ -255,26 +199,13 @@ export async function reconcileIdentity(identity: Identity, guestSnapshot: { use
     return
   }
 
-  // First-time connect: claim the guest session's progress, locally and on the server.
-  // Username is deliberately NOT carried over here — a guest nickname never
-  // went through reserved-word/uniqueness checks, so first-time connects
-  // always land on the claimUsername() prompt instead (see P2).
+  // First-time connect: no server record yet (PLAY requires a connection,
+  // so there's nothing real to have earned before this moment) — carry
+  // the guest bucket's cosmetic local state over for continuity, but
+  // don't write anything server-side. The first real /api/play/finish
+  // creates the actual server row.
   writeJson(STATS_BASE + suffix, guestSnapshot.stats)
   writeJson(TICKETS_BASE + suffix, guestSnapshot.tickets)
-  await Promise.all([
-    supabase.from('profiles').insert({ address: identity.address }),
-    supabase.from('stats').insert({ address: identity.address, ...{
-      games_played: guestSnapshot.stats.gamesPlayed,
-      games_won: guestSnapshot.stats.gamesWon,
-      total_crossings: guestSnapshot.stats.totalCrossings,
-      wallets_stolen: guestSnapshot.stats.walletsStolen,
-      wallet_winnings_total: guestSnapshot.stats.walletWinningsTotal,
-      paintings_stolen: guestSnapshot.stats.paintingsStolen,
-    } }),
-    guestSnapshot.tickets.count > 0
-      ? supabase.from('tickets_daily').insert({ address: identity.address, day: guestSnapshot.tickets.date, count: guestSnapshot.tickets.count })
-      : Promise.resolve(null),
-  ])
 }
 
 /** Snapshot of whatever's active right now (guest or already-connected) —

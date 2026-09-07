@@ -194,6 +194,12 @@ export type Result = {
   walletOutcome: RunState['walletOutcome']
   walletAmount: number
   heldItem: ItemKey | null
+  // Items actually used this run — separate from heldItem (unused, still
+  // in hand at the end). Both together are "what to credit toward the
+  // haul" (see P6/P5): escapeNow() wipes this on an early escape, same
+  // forfeiture rule as loot, so it's already correct as-is here, not
+  // something the caller needs to re-derive.
+  usedItemsThisRun: ItemKey[]
 }
 
 export class HeistRun {
@@ -1190,12 +1196,19 @@ const MAX_REPLAY_TICKS = Math.ceil(65000 / TICK_MS) // hard stop past the 60s ru
 
 /** Pure, DOM-free replay: same seed and the same recorded actions always
  *  reach the same Result. No canvas, no audio, no localStorage — this is
- *  what the determinism test and any future server-side verification call.
- *  `paintingRoll` defaults to false (never drops) because the real one
- *  reads/writes a shared localStorage counter that has no meaning outside a
- *  browser and no place in a pure function — see DECISIONS.md #1. */
-export function replay(seed: number, actions: ReplayInput[], paintingRoll: () => boolean = () => false): Result {
-  const run = new HeistRun(seed, paintingRoll)
+ *  what the determinism test and P5's server-side replay verification
+ *  call. `paintingRoll`/`itemRoll` default to "never drops" because the
+ *  real rolls are a global, cross-player counter with no meaning outside
+ *  a real request (see DECISIONS.md #1 and P5) — a caller that needs the
+ *  actual drop decisions a run used (P5's /api/play/finish does) passes
+ *  the same booleans the run was built with, not re-rolls them. */
+export function replay(
+  seed: number,
+  actions: ReplayInput[],
+  paintingRoll: () => boolean = () => false,
+  itemRoll?: (item: ItemKey) => boolean,
+): Result {
+  const run = new HeistRun(seed, paintingRoll, false, itemRoll)
   let ai = 0
   for (let t = 0; t < MAX_REPLAY_TICKS && run.live(); t++) {
     while (ai < actions.length && actions[ai][0] === run.tick) {
@@ -1224,6 +1237,7 @@ export function replay(seed: number, actions: ReplayInput[], paintingRoll: () =>
     walletOutcome: run.state.walletOutcome,
     walletAmount: run.state.walletAmount,
     heldItem: run.state.heldItem,
+    usedItemsThisRun: run.usedItemsThisRun,
   }
 }
 
@@ -1240,5 +1254,6 @@ export function resultOf(run: HeistRun): Result {
     walletOutcome: run.state.walletOutcome,
     walletAmount: run.state.walletAmount,
     heldItem: run.state.heldItem,
+    usedItemsThisRun: run.usedItemsThisRun,
   }
 }
