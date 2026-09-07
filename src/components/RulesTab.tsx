@@ -10,9 +10,12 @@ export default function RulesTab() {
 
       <h3 style={{ color: pal.amber, marginTop: 12, fontSize: theme.type.size.body, fontWeight: 700 }}>Wallet odds</h3>
       <p style={{ color: pal.concrete }}>
-        Points, not real money — there is no payment system yet. A wallet
-        pays out nothing, your stake back, or double — about 54% of runs
-        come out ahead. Revealed only at the end of the run.
+        If you pick one up, a wallet holds: nothing 45%, your stake back
+        (10 USDG) 43%, or double (20 USDG) 12%. Revealed only at the end
+        of the run. These are the odds of what&apos;s <em>inside</em> —
+        picking it up guarantees nothing on its own, you still have to
+        get out with it: escaping early, getting caught, or running out
+        of hearts forfeits whatever&apos;s in your hands, wallet included.
       </p>
 
       <h3 style={{ color: pal.amber, marginTop: 12, fontSize: theme.type.size.body, fontWeight: 700 }}>The painting</h3>
@@ -31,12 +34,19 @@ export default function RulesTab() {
       <h3 style={{ color: pal.amber, marginTop: 12, fontSize: theme.type.size.body, fontWeight: 700 }}>Police</h3>
       <p>They trail you the whole run. Push your lead too far and they call in backup — once, hard.</p>
 
+      <h3 style={{ color: pal.amber, marginTop: 12, fontSize: theme.type.size.body, fontWeight: 700 }}>Payouts</h3>
+      <p style={{ color: pal.concrete }}>
+        A win that can&apos;t be paid out for a reason outside our control —
+        a temporary failure on our side or the token&apos;s — is retried,
+        then rolled into the next draw&apos;s pot if it still can&apos;t go
+        through. No real money moves in this build yet.
+      </p>
+
       <h3 style={{ color: pal.amber, marginTop: 12, fontSize: theme.type.size.body, fontWeight: 700 }}>Calibration</h3>
       <p style={{ color: pal.concrete }}>
-        Return-to-player and difficulty numbers are not final — the engine and
-        its calibration harness are built (see the repo&apos;s CALIBRATION.md),
-        but the density/speed table is still being tuned against real play.
-        No real money moves in this build.
+        Difficulty numbers are not final — the engine and its calibration
+        harness are built (see the repo&apos;s CALIBRATION.md), but the
+        density/speed table is still being tuned against real play.
       </p>
 
       <p style={{ color: pal.concrete, marginTop: 12 }}>18+. Play responsibly.</p>

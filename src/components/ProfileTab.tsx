@@ -59,7 +59,7 @@ export default function ProfileTab() {
         setRedeemMsg({ ok: false, text: data.error ?? 'Could not redeem.' })
       } else {
         setRedeemDraft('')
-        setRedeemMsg({ ok: true, text: data.unlocked ? 'Unlocked!' : 'Linked — unlocks once your volume hits the referral threshold.' })
+        setRedeemMsg({ ok: true, text: 'Unlocked!' })
         refreshCodes()
       }
     } catch {

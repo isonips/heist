@@ -12,7 +12,6 @@ import { replay, type ItemKey, type ReplayInput, type Result } from '@/game/heis
 import {
   BONUS_DECAY_PCT_PER_DAY,
   BONUS_MAX_PCT,
-  BONUS_START_WITH_CODE_PCT,
   BONUS_WIN_PCT,
   PLAY_PRICE_USDG,
   POT_PCT,
@@ -129,20 +128,22 @@ export async function POST(req: Request) {
   const gamesWonBefore = statsRow?.games_won ?? 0
   const gamesWonAfter = gamesWonBefore + (won ? 1 : 0)
 
-  // Referral unlock (P4): a referred address unlocks automatically once
-  // its own volume (money actually spent playing) crosses
-  // REFERRAL_VOLUME_USDG. Always 0 while PLAY_PRICE_USDG is, so this
-  // never fires in practice yet — same "real plumbing, dormant amount"
-  // as the draw pot contribution above.
-  const { data: profileRow } = await admin.from('profiles').select('referred_by, lifetime_unlocked').eq('address', address).maybeSingle()
-  let justUnlocked = false
-  if (profileRow?.referred_by && !profileRow.lifetime_unlocked) {
+  // Referral reward (P4, corrected): a referred address ("filleul")
+  // reaching REFERRAL_VOLUME_USDG of its own play volume grants its
+  // REFERRER ("parrain") a new code to give out — it is NOT a condition
+  // on the filleul's own unlock (redeeming any code already unlocks
+  // immediately, see /api/codes/redeem). referral_reward_granted guards
+  // this firing once per filleul, not once per $500 increment. Always 0
+  // volume while PLAY_PRICE_USDG is, so this never fires in practice yet
+  // — same "real plumbing, dormant amount" as the draw pot contribution
+  // above.
+  const { data: profileRow } = await admin.from('profiles').select('referred_by, referral_reward_granted').eq('address', address).maybeSingle()
+  if (profileRow?.referred_by && !profileRow.referral_reward_granted) {
     const { data: playRows } = await admin.from('ledger').select('delta').eq('address', address).eq('reason', 'play')
     const volume = (playRows ?? []).reduce((sum, r) => sum + Math.abs(Number(r.delta)), 0)
     if (volume >= REFERRAL_VOLUME_USDG) {
-      justUnlocked = true
-      bonus = Math.max(bonus, BONUS_START_WITH_CODE_PCT)
-      await admin.from('profiles').update({ lifetime_unlocked: true }).eq('address', address)
+      await admin.from('codes').insert({ code: generateCode(), issuer_address: profileRow.referred_by, source: 'referral' })
+      await admin.from('profiles').update({ referral_reward_granted: true }).eq('address', address)
     }
   }
 
@@ -185,5 +186,5 @@ export async function POST(req: Request) {
 
   const { data: ticketsRow } = await admin.from('tickets_daily').select('count').eq('address', address).eq('day', today).maybeSingle()
 
-  return NextResponse.json({ result, stats: newStats, ticketsToday: ticketsRow?.count ?? 0, justUnlocked })
+  return NextResponse.json({ result, stats: newStats, ticketsToday: ticketsRow?.count ?? 0 })
 }

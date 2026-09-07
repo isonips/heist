@@ -1221,9 +1221,9 @@ delta — the plumbing writes a real ledger row for every game today, at
 zero cost, ready for the moment P7/the Vault contract makes it real. The
 wallet payout amount (`loot` reason) is unchanged from the existing
 nothing/refund/double mechanic — this round did *not* touch the P3
-calibration question (still unresolved, still flagged, see
-`CALIBRATION.md`), it only made the existing amounts flow through a real
-ledger instead of a client-only "points" number.
+calibration question. (Since resolved — see `CALIBRATION.md`'s P3
+section: the premise that the loot budget had to fully drain was wrong;
+the table stays 0/10/20 USDG, unchanged, permanently.)
 
 **P6 (haul) tightened at the same time:** `/api/haul/record` (session-only,
 client-claimed itemType/seed/runId — a real gap under P5's own standard)
@@ -1373,74 +1373,44 @@ otherwise touched), this just isn't it.
 $500 filleul volume, manual attribution with a traceable prefix). Genuine
 remaining scope, not started.
 
-## P4 — Codes (built this round; the reading behind it is a real judgment call)
+## P4 — Codes: original reading was wrong, corrected per explicit instruction
 
-**Built:** `codes` table (`code, issuer_address, source, redeemed_by,
-redeemed_at`), `profiles` grew `referred_by`/`lifetime_unlocked`.
-`POST /api/codes/redeem` claims a code for the session's address (an
-`update ... where code=X and redeemed_by is null` is the idempotency
-guard under a race — verified directly against the DB that a second
-claim attempt on an already-redeemed code matches zero rows, not an
-error). `GET /api/codes` returns the caller's unlock status and any
-still-unredeemed code they've been issued. `/api/play/finish` issues a
-`ten_wins` code the moment an address crosses `WINS_TO_ISSUE_CODE` wins
-(once — an existence check guards a second issuance across many later
-runs), and checks a referred address's own play volume against
-`REFERRAL_VOLUME_USDG` every game, unlocking automatically the moment it
-crosses. `/api/draw/run` now reads the real `profiles.lifetime_unlocked`
-instead of the hardcoded `false` from the previous commit.
+**The earlier reading in this file (superseded, kept only for the
+record) had it backwards: it deferred a `ten_wins`/`referral` code's
+unlock to a $500-volume threshold on the redeemer.** Corrected, per
+explicit instruction: **redeeming any code — `manual`, `ten_wins`, or
+`referral` alike — unlocks the redeemer immediately**, no exceptions,
+no conditional path. `lifetime_unlocked=true`, bonus starts at (at
+least) 50%, right at redemption.
 
-**The brief names three ways to obtain a code but doesn't fully specify
-how they compose — this is genuinely underspecified, and the reading
-below is an interpretation, not something to treat as settled:**
+**The $500 filleul-volume mechanic is a completely separate thing: it's
+how a *parrain* (the code's issuer) earns a *new* code to distribute —
+not a condition on the *filleul's* (redeemer's) own unlock at all.** The
+two had been fused into one mechanism in the earlier reading; they're
+independent now:
 
-> "Obtention à 10 parties gagnées, via un parrain à 500$ de volume
-> filleul, ou attribution manuelle avec préfixe traçable pour les
-> partenaires."
+- `/api/codes/redeem` unlocks the redeemer outright, and — if the code
+  had an issuer — also records `referred_by` on the redeemer, purely for
+  tracking the relationship.
+- `/api/play/finish` watches each referred address's own play volume
+  (`sum(abs(delta))` from `ledger` where `reason='play'`); the first time
+  it crosses `REFERRAL_VOLUME_USDG`, the *referrer* (`referred_by`) is
+  granted a brand new `referral`-sourced code to give out. Guarded by a
+  new `profiles.referral_reward_granted` flag so this fires once per
+  filleul, not once per $500 increment thereafter.
 
-Two things aren't pinned down: whether a code unlocks *its issuer* or
-*whoever redeems it*, and whether redeeming a code unlocks *immediately*
-or *conditionally*. The reading this implements, and why:
+Both remain dormant in practice while `PLAY_PRICE_USDG` is 0 (volume
+never moves) — expected, resolves at the real price, same as everywhere
+else this round.
 
-- **`ten_wins`**: earning it (10 wins) issues *you* a code — but its
-  purpose is to hand to someone else, not redeem yourself (`issuer_address
-  === address` is rejected outright at redemption). This matches "un
-  code débloque un compte à vie" read as "a code unlocks *an* account"
-  (the redeemer's), not "unlocks the account that earned it" (which
-  wouldn't need a code at all — the server could just flip a flag at 10
-  wins directly).
-- **Redeeming a `ten_wins`/`referral` code does NOT unlock immediately**
-  — it only sets `referred_by` on the redeemer, linking them to the
-  issuer. The actual unlock fires later, automatically, once *that*
-  address's own volume crosses `REFERRAL_VOLUME_USDG`. This is what
-  makes "obtention... via un parrain à 500$ de volume filleul" a
-  meaningfully distinct third path rather than a duplicate of "redeem a
-  code" — if redemption unlocked outright, the $500-volume clause would
-  never do anything.
-- **`manual` codes unlock immediately on redemption**, no volume gate —
-  this is the one case where "attribution manuelle... pour les
-  partenaires" reads most naturally as a direct grant a partner hands
-  someone, not a conditional one.
-
-If this reading is wrong, it's a small, contained change (the
-`if (codeRow.source === 'manual')` branch in `/api/codes/redeem` is the
-only place the two behaviors diverge) — flagged here explicitly so it
-gets checked rather than assumed correct.
-
-**Volume is `sum(abs(delta))` from `ledger` where `reason='play'` for
-that address** — total money actually spent playing. Always 0 while
-`PLAY_PRICE_USDG` is 0, so the referral path can't fire in practice yet,
-same dormant-but-real plumbing as everywhere else this round.
-
-**Not built: any way to actually create a `manual` code.** "Attribution
-manuelle avec préfixe traçable pour les partenaires" implies a human
-(you, or a partner-facing admin flow) explicitly creates one — there's
-no admin/partner role or auth concept in this app at all yet, and
-building one was out of scope for finishing this checklist item. Today,
-a manual code is inserted directly into the `codes` table (e.g. via the
-Supabase dashboard or MCP) with whatever prefix marks the partner —
-`source='manual'`, `issuer_address` optional. A real admin UI/route for
-this is future work if partner codes need to be self-serve.
+**Still not built: any way to actually create a `manual` code.**
+"Attribution manuelle avec préfixe traçable pour les partenaires"
+implies a human (you, or a partner-facing admin flow) explicitly creates
+one — there's no admin/partner role or auth concept in this app at all
+yet. Today, a manual code is inserted directly into the `codes` table
+(e.g. via the Supabase dashboard or MCP) with whatever prefix marks the
+partner — `source='manual'`, `issuer_address` optional. A real admin
+UI/route for this is future work if partner codes need to be self-serve.
 
 ## Deployment failure after CRON_SECRET was set — a likely cause, fixed defensively, not confirmed
 

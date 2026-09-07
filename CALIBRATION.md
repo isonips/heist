@@ -480,16 +480,39 @@ within the same four constants found a strict improvement. Accepted as
 final per instruction ("on laisse comme ça") rather than continuing to
 search or loosening a target band.
 
-## P3: wallet payout table vs. the 45% loot budget — doesn't close, reported not forced
+## P3: wallet payout table vs. the 45% loot budget — resolved, false premise
 
-**The brief's ask:** a 10 USDG entry splits 45% loot budget / 45% draw
-pot / 10% treasury (config, not hardcoded). The wallet payout table
-(`heistRun.ts` — nothing / refund 10 / double 20, at 45/43/12%) predates
-the commitment-window mechanic; the brief's own framing says it was
-calibrated against a lootKeptRate "measured around 37%" before that
-mechanic existed, and asks to re-measure spawn/conservation now and
-re-derive the probabilities so the effective payout matches the 45%
-budget, keeping the three dollar amounts (0/10/20) fixed.
+**Corrected understanding (was wrong below, kept for the record with the
+fix on top):** the 45/45/10 split is the target *allocation of the entry
+price*, not a promise that the 45% loot line item gets paid out in full
+every game, or even in expectation. The wallet is only banked roughly
+one game in nine (see the measured keep rate below) — most of that 45%
+never leaves the till on any given run, and the leftover funds the
+draw/bonus incentives rather than sitting idle or needing to be forced
+out through inflated payouts. **The table stays 0/10/20 USDG, unchanged,
+no new tier, no raised ceiling — the "doesn't close" framing below was
+chasing a target that was never the actual requirement.** Nothing in the
+app claims or depends on the loot line fully draining; the RULES tab
+publishes only the three wallet-content probabilities (45/43/12%),
+framed as "what's inside if you pick it up," never RTP, never the price
+split, never the conservation rate — see `RulesTab.tsx`.
+
+**Original (superseded) framing, kept below for the measurement data,
+which is still accurate and useful — only the conclusion was wrong:**
+
+<details>
+<summary>Original P3 writeup (superseded — see correction above)</summary>
+
+**The brief's ask, as originally read:** a 10 USDG entry splits 45% loot
+budget / 45% draw pot / 10% treasury (config, not hardcoded). The wallet
+payout table (`heistRun.ts` — nothing / refund 10 / double 20, at
+45/43/12%) predates the commitment-window mechanic; the brief's own
+framing says it was calibrated against a lootKeptRate "measured around
+37%" before that mechanic existed, and asks to re-measure spawn/
+conservation now and re-derive the probabilities so the effective payout
+matches the 45% budget, keeping the three dollar amounts (0/10/20)
+fixed. **This ask itself was the false premise** — see the correction
+above.
 
 **Measured** (`npx tsx src/harness/measure.ts 20000`, rational bot —
 plays to maximize EV, the one bot in this codebase built to face the
@@ -529,29 +552,16 @@ the achievable 22.9% ceiling instead of 45%, aggregate RTP tops out
 around 10% + 22.9% + 45% = **77.9%**, not 90% — the same shortfall,
 one level up.
 
-**Not fixed here, because every fix touches money design:**
-- Raise the payout ceiling (e.g. "double" pays more than 2x, or add a
-  bigger top-tier outcome) — the brief said keep 0/10/20 fixed, so this
-  would be a deviation from that constraint, not just a probability
-  recalibration.
-- Treat "Budget butin" as covering more than wallet cash — painting
-  (NFT) and mystery-item drops are loot too (P6), and they're on a
-  separate global-counter mechanism with no dollar value assigned yet
-  (`onChainBatch` stays null until mint). If they're meant to absorb
-  part of the 45%, the wallet-cash share of that budget is smaller than
-  4.5 USDG/game and the table *might* close — but I don't have a real
-  dollar figure for painting/item EV to net out, so I can't compute
-  that split without inventing one.
-- Raise spawn/conservation rates via game design (loot spawns more
-  often, or the commitment window makes holding less risky) — changes
-  the game itself, not just the payout table, and interacts with the
-  P0 calibration already locked in above.
+**Options considered at the time (none applied — see the correction
+above, the whole premise was wrong):**
+- Raise the payout ceiling — rejected explicitly: table stays 0/10/20,
+  no exceptions, no new tier.
+- Treat "Budget butin" as covering more than wallet cash (painting,
+  mystery items) — not needed; the budget was never required to drain.
+- Raise spawn/conservation rates via game design — not needed, same
+  reason.
 
-Flagged rather than decided, per "si un choix engage de l'argent réel,
-note-le et attends-moi" — this is exactly that kind of choice. The
-harness and the measurement above are ready to re-derive the table the
-moment a direction is picked; `p(refund)`/`p(double)` solve in one line
-once either the payout ceiling or the budget split is settled.
+</details>
 
 ## Known-fixed issues
 

@@ -1,10 +1,14 @@
-// POST { code } -> { ok, unlocked, linked? }. Redeems a code for the
-// session's address — see DECISIONS.md P4. A 'manual' code unlocks
-// immediately (lifetime_unlocked + bonus starts at 50%, see
-// src/game/economy.ts). A 'ten_wins'/'referral' code instead links
-// referred_by to the code's issuer; the actual unlock for that address
-// fires later, automatically, once its own volume crosses
-// REFERRAL_VOLUME_USDG (see /api/play/finish).
+// POST { code } -> { ok, unlocked }. Redeems a code for the session's
+// address — see DECISIONS.md P4. Every code type (manual, ten_wins,
+// referral) unlocks the redeemer immediately: lifetime_unlocked=true,
+// bonus starts at 50% (see src/game/economy.ts). There is no deferred/
+// conditional path — that was an earlier, incorrect reading of the
+// brief (redemption used to only "link" a ten_wins/referral code,
+// deferring the unlock to a volume threshold; corrected). If the code
+// came from an issuer, this also records referred_by — separately, for
+// the $500-filleul-volume mechanic, which is NOT a condition on this
+// redemption: it's how the issuer earns a *new* code to give out later
+// (see /api/play/finish).
 import { NextResponse } from 'next/server'
 import { BONUS_START_WITH_CODE_PCT } from '@/game/economy'
 import { getSessionAddress } from '@/lib/requireSession'
@@ -47,13 +51,10 @@ export async function POST(req: Request) {
     .maybeSingle()
   if (!claimed) return NextResponse.json({ error: 'This code has already been used.' }, { status: 409 })
 
-  if (codeRow.source === 'manual') {
-    await admin.from('profiles').upsert({ address, lifetime_unlocked: true })
-    const { data: statsRow } = await admin.from('stats').select('bonus_pct').eq('address', address).maybeSingle()
-    await admin.from('stats').upsert({ address, bonus_pct: Math.max(statsRow?.bonus_pct ?? 0, BONUS_START_WITH_CODE_PCT) })
-    return NextResponse.json({ ok: true, unlocked: true })
-  }
-
-  await admin.from('profiles').upsert({ address, referred_by: codeRow.issuer_address })
-  return NextResponse.json({ ok: true, unlocked: false, linked: true })
+  const { data: statsRow } = await admin.from('stats').select('bonus_pct').eq('address', address).maybeSingle()
+  await Promise.all([
+    admin.from('profiles').upsert({ address, lifetime_unlocked: true, ...(codeRow.issuer_address ? { referred_by: codeRow.issuer_address } : {}) }),
+    admin.from('stats').upsert({ address, bonus_pct: Math.max(statsRow?.bonus_pct ?? 0, BONUS_START_WITH_CODE_PCT) }),
+  ])
+  return NextResponse.json({ ok: true, unlocked: true })
 }
