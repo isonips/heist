@@ -204,7 +204,10 @@ export default function HeistGame() {
         runRef.current.useItem()
         return
       }
-      if (e.key === 'Enter') {
+      // Sprint was on Enter; asked to move it to Space, which is already
+      // USE ITEM above — Shift is the sprint key convention that doesn't
+      // collide with anything else bound here.
+      if (e.key === 'Shift') {
         e.preventDefault()
         if (!e.repeat) runRef.current.setSprinting(true)
         return
@@ -214,7 +217,7 @@ export default function HeistGame() {
       runRef.current.onKey(e.key)
     }
     const onKeyUp = (e: KeyboardEvent) => {
-      if (e.key === 'Enter') runRef.current.setSprinting(false)
+      if (e.key === 'Shift') runRef.current.setSprinting(false)
     }
     // Releases a stuck sprint if the tab loses focus mid-hold (alt-tab,
     // switching windows) — otherwise a keyup that never arrives would pin
@@ -582,11 +585,13 @@ export default function HeistGame() {
       ) : (
         // No on-screen control for sprint on desktop (that's TouchControls'
         // job, and it's touch-only) — this is the only place a keyboard
-        // player learns Enter does anything at all. Found missing during
-        // the P9 smoke test: the stamina bar is visible in the HUD but
-        // nothing ever explained what fills or drains it.
+        // player learns the sprint key exists at all. Found missing
+        // during the P9 smoke test: the stamina bar is visible in the
+        // HUD but nothing ever explained what fills or drains it. Was
+        // Enter; moved to Shift per direct request — Space was already
+        // bound to USE ITEM, so Space itself wasn't free to reuse.
         <p style={{ textAlign: 'center', margin: '4px 0 0', fontFamily: theme.type.family, fontSize: theme.type.size.feed, color: theme.palette.concrete }}>
-          Arrow keys to move · hold ENTER to sprint
+          Arrow keys to move · hold SHIFT to sprint
         </p>
       )}
       {demo && (

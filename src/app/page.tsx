@@ -10,6 +10,7 @@ import DrawTab from '@/components/DrawTab'
 import ProfileTab from '@/components/ProfileTab'
 import FeedWindow from '@/components/FeedWindow'
 import SplashScreen from '@/components/SplashScreen'
+import WalletHeaderBadge from '@/components/WalletHeaderBadge'
 import { getIdentity } from '@/game/identity'
 
 export default function Home() {
@@ -37,7 +38,7 @@ export default function Home() {
     // page's own last content on a short viewport, at any scroll position.
     <div style={{ paddingBottom: 64 }}>
       <SplashScreen />
-      <WindowChrome active={tab} onChange={changeTab}>
+      <WindowChrome active={tab} onChange={changeTab} headerExtra={<WalletHeaderBadge />}>
         {tab === 'play' && <HeistGame key="play" />}
         {tab === 'rules' && <RulesTab />}
         {tab === 'haul' && <MyHaulTab />}

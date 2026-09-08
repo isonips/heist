@@ -1641,6 +1641,52 @@ makes this diagnostic as well as cosmetic. `SPRINT_SPEED_MULT` left at
 compounding two unverified changes at once; worth revisiting the
 magnitude once the visual cue itself is confirmed working.
 
+## Fourth real-play round: the hook alone wasn't enough either, sprint key moved, wallet header added
+
+**`useIdentityToken()` fixed the rate limit but introduced a new failure:
+the hook's value stayed null on a fresh sign-in, with nothing to fall
+back to.** A purely reactive read only works if something *else* already
+populated the state it reads — evidently not guaranteed to have happened
+yet right after a fresh login. Fixed by keeping the hook as the
+preferred, zero-cost path, but falling back to exactly **one** imperative
+`getIdentityToken()` call (after a 1.5s grace period for the hook to
+catch up on its own) if it's still null — not a loop, so this doesn't
+reopen the rate-limit bug from two rounds ago; one call per sign-in
+attempt is negligible. `AuthSync.tsx`'s three-bugs-in-a-row history is
+now written into its own header comment so the next person (or me, in a
+future session) doesn't re-discover the same dead ends.
+
+**Sprint key moved off Enter per direct request — to Shift, not Space.**
+Space was already bound to USE ITEM (`HeistGame.tsx`'s keydown handler);
+reassigning it would have silently broken item use, so Shift was used
+instead as the closest still-free, conventional alternative. Flagged
+here rather than silently substituted without saying so, even though the
+user's literal ask (Space) wasn't what shipped.
+
+**New: a real on-chain USDG balance in the window header, plus a
+placeholder swap link.** `src/lib/onchainUsdg.ts` reads `balanceOf`/
+`decimals` directly from the real USDG contract on Robinhood Chain (same
+address/chain verified in P10) for the signed-in address — a genuinely
+different number from `/api/wallet`'s existing `balance` field, which is
+the internal off-chain ledger (always 0 today, PLAY_PRICE_USDG=0).
+`/api/wallet` now returns both; `WalletHeaderBadge.tsx` shows the
+on-chain figure in `WindowChrome`'s title bar via a new `headerExtra`
+slot. Added `viem` as a direct dependency (was already present
+transitively via Privy) for the read.
+
+**"Need USDG?" is NOT wired to LI.FI's actual fee-sharing yet — this
+sandbox's egress blocks `li.fi`/`docs.li.fi` entirely, so their
+integrator-fee mechanics (does it need a registered integrator ID? a fee
+query param? the SDK/widget only?) could not be verified before shipping
+anything.** Rather than guess at a fee config that might silently never
+pay out, the button currently links to plain `jumper.exchange` (LI.FI's
+own consumer swap app) with no fee attached — functional today, earns
+nothing yet. Wiring real fee capture needs, directly from the user (not
+something to invent): the wallet address that should receive the fee
+cut, and whether a LI.FI integrator account already exists or needs
+setting up. Documented rather than shipped as a guess, per the standing
+"real-money decisions get asked, not assumed" rule.
+
 ## P7 — perRun path chosen; `HeistPlay.sol` written and tested, not deployed
 
 **The user picked the path and gave the design directly**: perRun, not

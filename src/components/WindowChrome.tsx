@@ -20,10 +20,12 @@ export default function WindowChrome({
   active,
   onChange,
   children,
+  headerExtra,
 }: {
   active: TabId
   onChange: (t: TabId) => void
   children: ReactNode
+  headerExtra?: ReactNode
 }) {
   return (
     <div
@@ -47,9 +49,11 @@ export default function WindowChrome({
           padding: '0 8px',
           borderBottom: `2px solid ${pal.ink}`,
           fontSize: theme.type.size.body,
+          gap: 8,
         }}
       >
         <span>HEIST.exe</span>
+        {headerExtra}
         <span style={{ display: 'flex', gap: 4 }}>
           <ChromeButton icon="min" />
           <ChromeButton icon="close" />
