@@ -1805,6 +1805,22 @@ screen — confirmed as existing, unrelated behavior (`HeistGame` fully
 unmounts whenever the PLAY tab isn't active, per `page.tsx`'s
 conditional render), not something that changed or broke this round.
 
+## Police speed lowered ~15% per direct feedback ("caught too often")
+
+**`POLICE_PX` 5.5 → 4.7** (~15%, inside the 10-20% range asked for),
+after the sprint-speed and sprint-visibility fixes still left the
+catch-up rate itself feeling too fast in real play. This single constant
+scales every use of the police's closing speed at once — the baseline
+rate in `law()`, the `push`-multiplied catch-up rate once a lead gets
+large, and `secsToArrest()`'s own alert-level thresholds — so the effect
+isn't just "caught later," it's also more warning time before the
+critical/red state, consistently. Like the sprint changes before it,
+this is a live rebalance from direct feedback, not a rerun of
+CALIBRATION.md's P0 follow-up sweep against its commitment-window
+targets — that sweep's own numbers stay in CALIBRATION.md as a historical
+record of how 5.5 was reached, not something this entry retroactively
+edits.
+
 ## P7 — perRun path chosen; `HeistPlay.sol` written and tested, not deployed
 
 **The user picked the path and gave the design directly**: perRun, not

@@ -61,8 +61,17 @@ export const REIN_FROM = 7
 export const REIN_LEAD_S = 11
 // 4.0 was the original baseline; raised to 5.5 as part of the
 // commitment-window balance sweep once sprint/winded existed as a lever —
-// see CALIBRATION.md's P0 follow-up 3/4 for the full search.
-export const POLICE_PX = 5.5
+// see CALIBRATION.md's P0 follow-up 3/4 for the full search. Lowered to
+// 4.7 (~15%, within the 10-20% asked for) per direct live-play feedback
+// — "caught too often" — after the sprint-speed and sprint-visibility
+// fixes still left the catch-up rate itself feeling too fast. This
+// scales every use of POLICE_PX at once (baseline closing speed, the
+// push-multiplied catch-up rate in law(), and secsToArrest()'s alert
+// thresholds), so slower closing also means more warning before
+// critical, not just a slower arrest. Not re-swept against
+// CALIBRATION.md's P0 follow-up targets — a live rebalance from direct
+// feedback, same as the sprint changes before it.
+export const POLICE_PX = 4.7
 export const POLICE_HEAD_START_S: [number, number] = [5, 7]
 export const TICK_MS = 110
 export const ESCAPE_AT = 10
