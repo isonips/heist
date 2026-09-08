@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "scripts": {
     "test": "hardhat run scripts/runTests.js --no-compile",
-    "compile": "node scripts/compile.js"
+    "compile": "node scripts/compile.js",
+    "verify-token": "node scripts/verifyToken.js"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",

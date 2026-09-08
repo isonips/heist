@@ -1541,3 +1541,81 @@ stays the accounting source of truth either way. Not deployed anywhere,
 per the standing instruction; see `contracts/README.md` for the fuller
 writeup.
 
+### P7 correction — three distinct keys, bounded `operator`, 2-step `treasury` starting at zero
+
+Per explicit direct instruction (arbitrage doc, this round), the above
+was incomplete: `owner`/`operator`/`treasury` needed to be three genuinely
+distinct roles with real constraints, not just named differently.
+`HeistPlay.sol` rewritten accordingly (35 tests now, all passing):
+
+- **`treasury` can be `address(0)` at deploy time** — the real 2-of-N
+  multisig doesn't exist yet — and `play()` refuses to run while it's
+  unset (`ZeroAddress` revert) rather than silently sending the treasury
+  cut nowhere. There is no single-step setter for it at all anymore
+  (removed from `setConfig`); it changes only via `proposeTreasury`
+  (`owner`-only) / `acceptTreasury` (only the nominee can call it) — the
+  same 2-step shape `owner` itself and `HaulLedger`'s `recorder` already
+  use, so it can never be hardcoded or swapped in one call.
+- **`owner` and `operator` are enforced distinct** at construction and in
+  every role-changing call (`setOperator`, `proposeOwner`) — a stolen or
+  misissued key can never end up holding both roles at once.
+- **`operator` is explicitly treated as a hot key**: new
+  `maxPayoutPerTx`/`maxPayoutPerDay` (owner-only via `setPayoutLimits`,
+  enforced inside `payout()`, daily total tracked per UTC day in
+  `payoutsByDay`) bound what a compromised copy of it can move — "a
+  stolen key costs one day of pool, not the whole pool," per the brief's
+  own framing.
+- **Explicit on-chain solvency invariant**: `payout()` now checks
+  `usdg.balanceOf(address(this))` against the requested amount and
+  reverts (`InsufficientPool`) before transferring, independent of
+  relying on `SafeERC20`'s own implicit revert-on-insufficient-balance —
+  a second, deliberate guard rather than an accident of the library.
+
+Full role table (addresses per the brief): `owner` = hardware wallet
+`0xDa784752645C951622021D09a44e3E5CD2296613` (never on a server);
+`operator` = a dedicated, generated server key, not yet created, never
+the deployer's; `treasury` = a 2-of-N multisig, address not yet known —
+exactly why it has to be settable post-deploy rather than baked into the
+constructor as a required non-zero value.
+
+## P10 correction — USDG confirmed on-chain: 6 decimals, EIP-1967 proxy, mandatory deploy guard
+
+Per the same arbitrage doc: Robinhood Chain and its USDG address are now
+**verified on-chain**, not just assumed. `eth_chainId` against
+`https://rpc.mainnet.chain.robinhood.com` returns `4663`; the token at
+`0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168` is Global Dollar, symbol
+`USDG`, **6 decimals** (not the ERC20-default 18), current supply
+~670.7M, and is an EIP-1967 proxy (implementation
+`0x68184c449e1a8f34fa18d289737129fd27b66f8f`). USDG is a Paxos
+multi-chain stablecoin (`docs.paxos.com/guides/stablecoin/usdg`) — each
+network has its own address; Ethereum's (`0xe343167631d89B6Ffc58B88d6b7fB0228795491D`)
+**has no contract at all on chainId 4663** and must never appear in this
+repo. Confirmed via grep this round: it doesn't.
+
+Three concrete follow-ups, all done this round:
+
+1. **`HeistPlay.sol` never assumed 18 decimals** — it always stored and
+   moved raw token units with no decimals opinion of its own (see the
+   contract's own header comment). A new test block in
+   `contracts/scripts/runTests.js` proves this concretely: the same
+   play()/payout() flow run against a new `MockUSDG6.sol` mock (6dp,
+   symbol `USDG`, mirroring the real token) checking raw-unit amounts —
+   specifically to catch any *future* edit that silently hardcodes 18.
+2. **Regulated-token risk (freeze/pause/blacklist) already handled
+   structurally**: every token movement in `HeistPlay.sol` goes through
+   OpenZeppelin's `SafeERC20`, which checks `transfer`/`transferFrom`'s
+   return value rather than assuming a revert on failure — already
+   correct before this round, just confirmed against the brief's
+   explicit requirement rather than by accident.
+3. **New mandatory pre-deploy guard**: `contracts/scripts/verifyToken.js`
+   (`npm run verify-token` inside `contracts/`) checks, against a live
+   RPC, that the target chainId matches, the token address has bytecode,
+   `symbol()` returns `"USDG"`, and `decimals()` returns `6` — aborting
+   (non-zero exit) on any mismatch. This sandbox's egress allowlist
+   blocks `rpc.mainnet.chain.robinhood.com` (confirmed by actually
+   running the script here — it correctly aborted with a clear "host not
+   in allowlist" error, which is itself the guard behaving correctly, not
+   a bug), so it hasn't self-verified from inside this session; run it
+   from an environment with real network access as the actual pre-deploy
+   step. **Still not deployed anywhere, per the standing instruction.**
+
