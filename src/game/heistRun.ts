@@ -1133,13 +1133,11 @@ export class HeistRun {
             this.cell(ctx, ICONS[loot as keyof typeof ICONS], lx, ly)
             if (this.tick % 2 === 0) { ctx.fillStyle = PAL.W; ctx.fillRect(lx + 8, ly - 1, 1, 1) }
           }
-          const item = this.itemAt(i)
-          if (item) {
-            const ix = this.itemX(i), iy = y + band.h - 10
-            ctx.fillStyle = PAL.b; ctx.fillRect(ix - 1, iy - 1, 10, 10)
-            this.cell(ctx, ICONS[item], ix, iy)
-            if (this.tick % 2 === 0) { ctx.fillStyle = PAL.G; ctx.fillRect(ix + 8, iy - 1, 1, 1) }
-          }
+          // Items (oldMan/pileUp/shortcut) aren't drawn right now — not
+          // usable in-game until they're NFT-gated (Z key, later). The
+          // underlying roll/pickup (itemAt(), pickUp() below) still runs
+          // exactly as before so HAUL keeps accumulating silently; this
+          // is only the visual, on purpose.
         }
         ;(this.furn[i] || []).forEach((p) => {
           const art = ENV[p.kind as keyof typeof ENV]

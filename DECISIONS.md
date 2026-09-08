@@ -1685,7 +1685,45 @@ nothing yet. Wiring real fee capture needs, directly from the user (not
 something to invent): the wallet address that should receive the fee
 cut, and whether a LI.FI integrator account already exists or needs
 setting up. Documented rather than shipped as a guess, per the standing
-"real-money decisions get asked, not assumed" rule.
+"real-money decisions get asked, not assumed" rule. **Answered**: the
+user already has a LI.FI integrator account — still waiting on the
+integrator ID and fee-recipient address before wiring the fee itself.
+
+## Items disabled in-game, pending NFTs — Space freed up for sprint
+
+**Direct instruction: oldMan/pileUp/shortcut items must not be present
+or usable during a run right now — reserved for later, gated behind
+NFTs, to be triggered with Z once that lands.** Confirmed scope via a
+quick check first, since "not present and usable" was genuinely
+ambiguous between "hide the in-run effect only" and "stop the whole
+mechanic, including HAUL accumulation": the former. So:
+
+- `heistRun.ts`'s `draw()` no longer renders an item's icon on its
+  `'stop'` band — nothing to see, nothing to walk up to.
+- The USE button and the gold "item used" banner are removed from
+  `HeistGame.tsx`'s HUD entirely (were gated on `hud.heldItem`/
+  `hud.effectBanner`, both now unreachable in practice).
+- No key triggers `useItem()` anymore — not Space, not Z (Z is reserved
+  for later, deliberately left unbound rather than wired to a no-op).
+
+**Everything underneath stays untouched, on purpose**: `itemAt()`'s
+per-band item assignment and `pickUp()`'s automatic-on-overlap pickup
+(unchanged — it was always automatic, not button-triggered) still run
+exactly as before, so `state.heldItem` still gets set silently when the
+thief's position passes near an item's (invisible) spot, and
+`/api/play/finish`'s HAUL crediting (`usedItemsThisRun[0] ?? heldItem`)
+still fires off that same state — the accumulation toward a future
+retroactive NFT mint (P6) keeps running with nothing visibly happening
+in-game, which is exactly what was asked for. `useItem()` itself,
+`itemEffectBanner`, and the `'UseItem'` replay action type are all left
+in place, unreferenced by any UI right now — ready for Z to call them
+again once NFTs are live, rather than something to rebuild from scratch.
+
+**Space freed up for sprint as a direct consequence.** Sprint moved
+Enter → Shift → **Space** across three real rounds of feedback; Space
+was only unavailable while USE ITEM lived there, so disabling items
+made the player's original ask (Space) actually workable. No key
+conflicts left: arrows move, Space sprints, nothing is bound to Z yet.
 
 ## P7 — perRun path chosen; `HeistPlay.sol` written and tested, not deployed
 

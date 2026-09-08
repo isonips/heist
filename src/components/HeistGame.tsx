@@ -15,14 +15,6 @@ import PixelIcon from './PixelIcon'
 import ResponsiveScale from './ResponsiveScale'
 import TouchControls, { type Dir as TouchDir } from './TouchControls'
 
-const ITEM_LABEL: Record<ItemKey, string> = {
-  oldMan: 'THE OLD MAN — TRAFFIC STOPS DEAD',
-  pileUp: 'THE PILE-UP — A LANE IS BLOCKED',
-  shortcut: 'THE SHORTCUT — FIVE SECONDS BOUGHT',
-  safe: 'THE SAFE',
-  haul: 'THE HAUL',
-}
-
 const REASON_LABEL: Record<'paid' | 'collared' | 'flattened' | 'timeout', string> = {
   paid: 'the crime paid',
   collared: 'caught',
@@ -199,15 +191,12 @@ export default function HeistGame() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      // Sprint on Space — was Enter, then briefly Shift (Space was taken
+      // by USE ITEM at the time). Items are disabled in-game for now (see
+      // the USE button removal below), which freed Space back up; per
+      // direct request, sprint moved here. Z is reserved for items' own
+      // return once they're NFT-gated — not bound to anything yet.
       if (e.key === ' ' || e.code === 'Space') {
-        e.preventDefault()
-        runRef.current.useItem()
-        return
-      }
-      // Sprint was on Enter; asked to move it to Space, which is already
-      // USE ITEM above — Shift is the sprint key convention that doesn't
-      // collide with anything else bound here.
-      if (e.key === 'Shift') {
         e.preventDefault()
         if (!e.repeat) runRef.current.setSprinting(true)
         return
@@ -217,7 +206,7 @@ export default function HeistGame() {
       runRef.current.onKey(e.key)
     }
     const onKeyUp = (e: KeyboardEvent) => {
-      if (e.key === 'Shift') runRef.current.setSprinting(false)
+      if (e.key === ' ' || e.code === 'Space') runRef.current.setSprinting(false)
     }
     // Releases a stuck sprint if the tab loses focus mid-hold (alt-tab,
     // switching windows) — otherwise a keyup that never arrives would pin
@@ -459,25 +448,6 @@ export default function HeistGame() {
           style={{ position: 'absolute', top: 0, left: 0, width: W * SCALE, height: H * SCALE, imageRendering: 'pixelated', border: `2px solid ${theme.palette.ink}` }}
         />
         <Hud hud={hud} />
-        {hud.effectBanner && (
-          <div
-            style={{
-              position: 'absolute',
-              top: HUD_HEIGHT,
-              left: 0,
-              right: 0,
-              background: theme.palette.gold,
-              color: theme.palette.ink,
-              textAlign: 'center',
-              fontFamily: theme.type.family,
-              fontSize: theme.type.size.feed,
-              padding: '2px 0',
-              pointerEvents: 'none',
-            }}
-          >
-            {ITEM_LABEL[hud.effectBanner]}
-          </div>
-        )}
         {hud.mode === 'caught' && (
           <div
             style={{
@@ -566,11 +536,13 @@ export default function HeistGame() {
               no way out — hold to the end
             </span>
           )}
-          {hud.heldItem && !ended && (
-            <button onClick={() => runRef.current.useItem()} style={{ ...buttonStyle, display: 'flex', alignItems: 'center', gap: 4 }}>
-              <PixelIcon name={hud.heldItem} scale={2} /> USE
-            </button>
-          )}
+          {/* Items (oldMan/pileUp/shortcut) aren't usable in-game yet —
+              they're reserved for later, gated behind NFTs, triggered
+              with Z once that lands. No USE button, no key binding; the
+              server-side drop roll and HAUL banking still run silently
+              underneath (see heistRun.ts's pickUp()/itemAt() and
+              /api/play/finish) so accumulation isn't lost, only the
+              in-run effect and any visible presence. */}
           <button onClick={toggleSound} style={{ ...buttonStyle, padding: '6px 10px' }} title={hud.soundOn ? 'Mute' : 'Unmute'}>
             {hud.soundOn ? 'SOUND ON' : 'SOUND OFF'}
           </button>
@@ -587,11 +559,9 @@ export default function HeistGame() {
         // job, and it's touch-only) — this is the only place a keyboard
         // player learns the sprint key exists at all. Found missing
         // during the P9 smoke test: the stamina bar is visible in the
-        // HUD but nothing ever explained what fills or drains it. Was
-        // Enter; moved to Shift per direct request — Space was already
-        // bound to USE ITEM, so Space itself wasn't free to reuse.
+        // HUD but nothing ever explained what fills or drains it.
         <p style={{ textAlign: 'center', margin: '4px 0 0', fontFamily: theme.type.family, fontSize: theme.type.size.feed, color: theme.palette.concrete }}>
-          Arrow keys to move · hold SHIFT to sprint
+          Arrow keys to move · hold SPACE to sprint
         </p>
       )}
       {demo && (
