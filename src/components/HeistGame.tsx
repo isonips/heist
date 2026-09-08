@@ -1,13 +1,13 @@
 'use client'
 
-import { usePrivy } from '@privy-io/react-auth'
+import { useLogout, usePrivy } from '@privy-io/react-auth'
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { theme } from '@/design/theme'
 import { ESCAPE_AT, H, HeistRun, OUTRO_TICKS, SCALE, TICK_MS, W, type ItemKey, type Mode } from '@/game/heistRun'
 import { buildRun } from '@/game/buildRun'
 import { postFeedEvent } from '@/game/feedBus'
 import { exportDemoLogAsFile, getDemoLog, recordDemoRun } from '@/game/demoLog'
-import { getIdentity, onIdentityChange } from '@/game/identity'
+import { disconnect as disconnectWallet, getIdentity, onIdentityChange } from '@/game/identity'
 import { recordItemEarned } from '@/game/haulStore'
 import { applyPlayResult, getUsername } from '@/game/profile'
 import type { EventType } from '@/design/lines'
@@ -93,12 +93,24 @@ export default function HeistGame() {
   // this component just waits for its result via onIdentityChange), so a
   // player never has to click PLAY twice.
   const { login, authenticated } = usePrivy()
+  const { logout: privyLogout } = useLogout()
   const pendingPlayRef = useRef(false)
   // The signed ticket /api/play/start issued for the run currently in
   // runRef — carried through to /api/play/finish at the end (see
   // DECISIONS.md P5). null for DEMO, which never touches either route.
   const ticketRef = useRef<string | null>(null)
   const [startError, setStartError] = useState<string | null>(null)
+
+  // Escape hatch for a stuck "Finishing sign-in…" (P9 smoke test finding —
+  // AuthSync.tsx could hang here with no error surfaced at all if a wallet
+  // never links). Same steps as ProfileTab's own DISCONNECT.
+  const disconnectStuck = useCallback(() => {
+    disconnectWallet()
+    void fetch('/api/auth/logout', { method: 'POST' })
+    void privyLogout()
+    pendingPlayRef.current = false
+    setStartError(null)
+  }, [privyLogout])
 
   // Fetches a fresh seed + drop rolls + signed ticket from the server and
   // builds the engine from exactly those — PLAY never picks its own seed
@@ -328,7 +340,16 @@ export default function HeistGame() {
             </p>
           </div>
         </div>
-        {startError && <p style={{ color: theme.palette.sirenRed, fontSize: theme.type.size.feed, margin: 0 }}>{startError}</p>}
+        {startError && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <p style={{ color: theme.palette.sirenRed, fontSize: theme.type.size.feed, margin: 0 }}>{startError}</p>
+            {authenticated && (
+              <button onClick={disconnectStuck} style={{ ...buttonStyle, padding: '4px 10px', fontSize: theme.type.size.feed }}>
+                DISCONNECT
+              </button>
+            )}
+          </div>
+        )}
       </div>
     )
   }
@@ -553,11 +574,20 @@ export default function HeistGame() {
         </div>
       </div>
       </ResponsiveScale>
-      {touch && (
+      {touch ? (
         <TouchControls
           onPress={(dir: TouchDir) => runRef.current.onKey(dir)}
           onSprintChange={(held: boolean) => runRef.current.setSprinting(held)}
         />
+      ) : (
+        // No on-screen control for sprint on desktop (that's TouchControls'
+        // job, and it's touch-only) — this is the only place a keyboard
+        // player learns Enter does anything at all. Found missing during
+        // the P9 smoke test: the stamina bar is visible in the HUD but
+        // nothing ever explained what fills or drains it.
+        <p style={{ textAlign: 'center', margin: '4px 0 0', fontFamily: theme.type.family, fontSize: theme.type.size.feed, color: theme.palette.concrete }}>
+          Arrow keys to move · hold ENTER to sprint
+        </p>
       )}
       {demo && (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, fontFamily: theme.type.family, fontSize: theme.type.size.feed, color: theme.palette.concrete }}>

@@ -73,6 +73,24 @@ export default function AuthSync() {
     return () => { cancelled = true }
   }, [ready, authenticated, hasWallet, retryNonce])
 
+  // Bug found live (P9 smoke test): the effect above returns immediately,
+  // silently, while `!hasWallet` — correct for the brief embedded-wallet-
+  // creation lag it was written for, but if a wallet never links at all
+  // (Privy dashboard misconfigured, or a wallet login that fails to
+  // attach), this used to hang forever with no error, no banner, and
+  // therefore no RETRY — "Finishing sign-in…" with no way out, since the
+  // banner below only ever rendered from the *other* effect's catch
+  // block, which this path never reaches. This timer is independent of
+  // that one specifically so a stuck `hasWallet` surfaces its own error
+  // instead of hanging silently.
+  useEffect(() => {
+    if (!ready || !authenticated || hasWallet) return
+    const timer = setTimeout(() => {
+      setError('No wallet is linked to this sign-in yet. Disconnect and try again, or retry.')
+    }, 8000)
+    return () => clearTimeout(timer)
+  }, [ready, authenticated, hasWallet, retryNonce])
+
   // A silent console.error here was worse than useless the one time this
   // actually broke — nobody watching the game screen has devtools open.
   // A small banner with an actual retry at least gives a stuck session a

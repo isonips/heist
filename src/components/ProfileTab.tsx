@@ -129,18 +129,22 @@ export default function ProfileTab() {
           </span>
           <button onClick={disconnect} style={buttonStyle}>DISCONNECT</button>
         </div>
+      ) : authenticated ? (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ color: pal.concrete, fontSize: FEED }}>Finishing sign-in…</span>
+            <button onClick={disconnect} style={buttonStyle}>DISCONNECT</button>
+          </div>
+          <p style={{ color: pal.concrete, fontSize: FEED, marginTop: 4 }}>
+            If this doesn&apos;t resolve in a few seconds, check the banner at the bottom of the
+            screen, or hit DISCONNECT above and try connecting again.
+          </p>
+        </>
       ) : (
         <>
-          {authenticated ? (
-            <p style={{ color: pal.concrete, fontSize: FEED, margin: 0 }}>
-              Finishing sign-in… if this doesn&apos;t resolve in a few seconds, check the banner at the
-              bottom of the screen.
-            </p>
-          ) : (
-            <button onClick={() => login()} disabled={!ready} style={{ ...buttonStyle, opacity: !ready ? 0.5 : 1 }}>
-              CONNECT
-            </button>
-          )}
+          <button onClick={() => login()} disabled={!ready} style={{ ...buttonStyle, opacity: !ready ? 0.5 : 1 }}>
+            CONNECT
+          </button>
           <p style={{ color: pal.concrete, fontSize: FEED, marginTop: 4 }}>
             Email or wallet — either way you get one address. PLAY, tickets, bonus and loot all need
             this; DEMO doesn&apos;t. Progress below is local to this browser until you connect.

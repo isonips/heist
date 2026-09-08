@@ -1520,6 +1520,54 @@ running app, and not worth an error boundary or a placeholder-provider
 workaround for a case nobody hits in production. Noted here rather than
 silently dropped.
 
+## Real player report: stuck sign-in with no way out, and no visible sprint control
+
+**Fourth real bug, this one production-affecting and severe: "Finishing
+sign-in…" could hang forever with no error, no banner, and no way to
+disconnect.** `AuthSync.tsx`'s sync effect returns immediately, silently,
+while `!hasWallet` — correct for the brief embedded-wallet-creation race
+it was written for, but if a wallet never links at all (Privy dashboard
+not set to auto-create embedded wallets for email users, or a wallet
+login that fails to attach), that early return meant the retry loop and
+its error banner were never reached at all. Both `HeistGame.tsx` and
+`ProfileTab.tsx` told the stuck player to "check the banner at the bottom
+of the screen" — a banner that could never appear on this path — and
+`ProfileTab`'s DISCONNECT button was gated behind a local `identity` that
+had, by definition, never been set. A real dead end, exactly as reported.
+
+Fixed three ways: (1) `AuthSync.tsx` gained an independent 8s timeout on
+the `!hasWallet` wait that surfaces a real error ("No wallet is linked to
+this sign-in yet...") if it never resolves; (2) `ProfileTab.tsx` now shows
+DISCONNECT whenever Privy considers the session `authenticated`, not only
+once a local identity exists; (3) `HeistGame.tsx`'s own "Finishing
+sign-in…" message (shown when PLAY is clicked mid-stuck-state) grew the
+same DISCONNECT action inline, so the player never has to find PROFILE
+first.
+
+**Also reported: no visible sprint control at all.** True on desktop —
+`TouchControls` (which does have a sprint button) only renders on touch
+devices; desktop's only sprint input was the Enter key, with nothing on
+screen ever saying so. Fixed with a one-line hint under the controls area
+on non-touch: "Arrow keys to move · hold ENTER to sprint." Worth noting
+for calibration context: `SPRINT_SPEED_MULT = 1.0` is intentional (see
+its own comment above, CALIBRATION.md's P0 follow-up 3/4) — sprint gives
+no actual speed boost, it only postpones `winded`. A player who now finds
+the button and holds it will correctly *not* feel faster; that's the
+calibrated design, not a bug, but worth having said once here since it's
+counter-intuitive.
+
+**Also reported, not changed: "can't stop for more than ~2 seconds
+without the screen going red."** Read against the code, this is the
+intended core mechanic, not a bug — `law()` advances the police's
+position every tick regardless of whether the thief moves, so standing
+still closes the gap at the police's full speed (and faster, via the
+`push` rubber-band in `law()`, once the lead is large). Whether the
+current pacing is *too* punishing, or the lack of any visible pursuer
+sprite makes the pressure feel arbitrary, is a real design question, not
+a code defect — flagged back to the user rather than re-tuned unilaterally
+given three prior calibration passes already landed on today's numbers
+against explicit sweep targets (CALIBRATION.md).
+
 ## P7 — perRun path chosen; `HeistPlay.sol` written and tested, not deployed
 
 **The user picked the path and gave the design directly**: perRun, not
