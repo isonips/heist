@@ -26,18 +26,40 @@
 // stuck token would strand the whole session (PLAY/PROFILE/DRAW gates
 // all check identity.ts, which never got set) until a hard reload.
 import { getIdentityToken, usePrivy } from '@privy-io/react-auth'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { theme } from '@/design/theme'
 import { getIdentity, setIdentity, type Identity } from '@/game/identity'
 import { reconcileIdentity, snapshotActive } from '@/game/profile'
 
-const TOKEN_RETRY_DELAYS_MS = [0, 400, 800, 1500, 3000, 3000] // ~8.7s total before giving up
+// Short and few — this is only meant to ride out a beat right after auth,
+// not paper over a real problem. The original 6-attempt/~8.7s burst was
+// itself the cause of a real bug found live: getIdentityToken() hits
+// Privy's own API (confirmed — see @privy-io/api-base's rate-limit error
+// text), and firing 6 calls in ~9s, then another 6 on every manual RETRY,
+// was enough to trip Privy's own rate limit — "Too many requests" was our
+// own retry loop's doing, not a real outage. 3 attempts / ~2.5s is still
+// enough for the race this exists for.
+const TOKEN_RETRY_DELAYS_MS = [0, 700, 1800]
+// After any failure, RETRY is disabled for a cooldown that grows with
+// consecutive failures (5s, 10s, 15s... capped at 30s) — specifically so
+// hammering RETRY against a live rate-limit can't make it worse, which is
+// exactly what happened before this existed ("même résultat en essayant
+// à nouveau", immediately, every time).
+const RETRY_COOLDOWN_STEP_S = 5
+const RETRY_COOLDOWN_MAX_S = 30
 
 export default function AuthSync() {
   const { ready, authenticated, user } = usePrivy()
   const hasWallet = Boolean(user?.wallet?.address)
   const [error, setError] = useState<string | null>(null)
   const [retryNonce, setRetryNonce] = useState(0)
+  const failCountRef = useRef(0)
+  const [cooldownS, setCooldownS] = useState(0)
+
+  const registerFailure = () => {
+    failCountRef.current += 1
+    setCooldownS(Math.min(RETRY_COOLDOWN_MAX_S, failCountRef.current * RETRY_COOLDOWN_STEP_S))
+  }
 
   useEffect(() => {
     if (!ready || !authenticated || !hasWallet) return
@@ -66,12 +88,21 @@ export default function AuthSync() {
         const id: Identity = { address: data.address, source: 'privy' }
         setIdentity(id)
         await reconcileIdentity(id, guestSnapshot)
+        failCountRef.current = 0
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Could not sign in.')
+        if (cancelled) return
+        setError(err instanceof Error ? err.message : 'Could not sign in.')
+        registerFailure()
       }
     })()
     return () => { cancelled = true }
   }, [ready, authenticated, hasWallet, retryNonce])
+
+  useEffect(() => {
+    if (cooldownS <= 0) return
+    const timer = setInterval(() => setCooldownS((s) => Math.max(0, s - 1)), 1000)
+    return () => clearInterval(timer)
+  }, [cooldownS])
 
   // Bug found live (P9 smoke test): the effect above returns immediately,
   // silently, while `!hasWallet` — correct for the brief embedded-wallet-
@@ -87,6 +118,7 @@ export default function AuthSync() {
     if (!ready || !authenticated || hasWallet) return
     const timer = setTimeout(() => {
       setError('No wallet is linked to this sign-in yet. Disconnect and try again, or retry.')
+      registerFailure()
     }, 8000)
     return () => clearTimeout(timer)
   }, [ready, authenticated, hasWallet, retryNonce])
@@ -118,9 +150,18 @@ export default function AuthSync() {
       <span>Sign-in failed: {error}</span>
       <button
         onClick={() => setRetryNonce((n) => n + 1)}
-        style={{ background: theme.palette.pale, border: 'none', color: theme.palette.ink, cursor: 'pointer', fontFamily: theme.type.family, padding: '2px 8px' }}
+        disabled={cooldownS > 0}
+        style={{
+          background: theme.palette.pale,
+          border: 'none',
+          color: theme.palette.ink,
+          cursor: cooldownS > 0 ? 'default' : 'pointer',
+          opacity: cooldownS > 0 ? 0.6 : 1,
+          fontFamily: theme.type.family,
+          padding: '2px 8px',
+        }}
       >
-        RETRY
+        {cooldownS > 0 ? `RETRY (${cooldownS}s)` : 'RETRY'}
       </button>
       <button
         onClick={() => setError(null)}

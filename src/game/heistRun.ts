@@ -99,14 +99,25 @@ export const OUTRO_TICKS = Math.round(2600 / TICK_MS)
 // lever that can actually move medianSecsToTenth. Tuned via a sweep
 // against the commitment-window targets, alongside POLICE_PX above — full
 // search and the values these replaced (1.5/0.6/8/5): CALIBRATION.md's P0
-// follow-up 3/4. SPRINT_SPEED_MULT = 1 (no real speed bonus — sprinting
-// only postpones winded, it doesn't outrun it) turned out to matter far
-// less than WINDED_SPEED_MULT and SPRINT_RECHARGE_S for reaching the
-// targets; kept as its own constant rather than folded away, since a
-// non-1 value is a legitimate thing to revisit later.
+// follow-up 3/4.
+//
+// SPRINT_SPEED_MULT was shipped at 1 (no real speed bonus at all — see
+// CALIBRATION.md) with a note that a non-1 value was worth revisiting.
+// Revisited per direct live-playtest feedback: with zero speed bonus,
+// sprint could only ever hurt (it drains toward a full-stop `winded`
+// for nothing in return), which read as "the sprint button does
+// nothing" — a real usability problem, not just a subtle balance one.
+// 1.2 (20%, the player's own proposed number, given how fast the police
+// gap closes once you stop) makes sprint a genuine, earned way to open
+// distance, at the cost of consuming a limited gauge that only refills
+// over SPRINT_RECHARGE_S — same trade-off shape as before, just with an
+// actual upside now. Not re-swept against the commitment-window targets
+// from CALIBRATION.md's P0 follow-up — this is a live rebalance from
+// direct feedback, not a re-run of that harness; worth a fresh sweep
+// later if the numbers end up needing another pass.
 export const SPRINT_DRAIN_S = 8
 export const SPRINT_RECHARGE_S = 10
-export const SPRINT_SPEED_MULT = 1.0
+export const SPRINT_SPEED_MULT = 1.2
 export const WINDED_SPEED_MULT = 0.0
 export const CAR_COLOURS = [
   { body: 'B', shade: 'S', light: 'C' }, { body: 'R', shade: 'b', light: 'A' },

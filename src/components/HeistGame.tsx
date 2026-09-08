@@ -659,20 +659,26 @@ function Hud({ hud }: { hud: HudSnapshot }) {
         <span>{hud.timeLeft}s</span>
         <span>{hud.crossed} / {ESCAPE_AT}</span>
       </div>
-      {hud.started && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <PixelIcon name="running" scale={2} />
-          <div style={{ flex: 1, height: 4, background: pal.chrome, border: `1px solid ${pal.ink}` }}>
-            <div
-              style={{
-                width: `${Math.round(hud.staminaPct * 100)}%`,
-                height: '100%',
-                background: hud.winded ? pal.sirenRed : pal.amber,
-              }}
-            />
-          </div>
+      {/* No longer gated on hud.started (run.started only flips true on the
+          first key press) — a new player should see this exists before
+          they've even moved, not discover it mid-run. Reported live as "no
+          visible gauge" alongside "no visible sprint speed boost" (the
+          latter was real — SPRINT_SPEED_MULT was 1.0, see its own comment
+          in heistRun.ts); this half of the fix is about the gauge actually
+          reading as a gauge, not just a thin sliver. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <PixelIcon name="running" scale={2} />
+        <span style={{ fontSize: theme.type.size.feed }}>SPRINT</span>
+        <div style={{ flex: 1, height: 7, background: pal.chrome, border: `1px solid ${pal.ink}` }}>
+          <div
+            style={{
+              width: `${Math.round(hud.staminaPct * 100)}%`,
+              height: '100%',
+              background: hud.winded ? pal.sirenRed : pal.amber,
+            }}
+          />
         </div>
-      )}
+      </div>
     </div>
   )
 }

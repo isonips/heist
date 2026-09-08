@@ -1568,6 +1568,43 @@ a code defect — flagged back to the user rather than re-tuned unilaterally
 given three prior calibration passes already landed on today's numbers
 against explicit sweep targets (CALIBRATION.md).
 
+## Second real-play round: a self-inflicted rate limit, and sprint given a real speed bonus
+
+**"Too many requests" on sign-in, immediately, every RETRY — caused by
+our own retry loop, not a real outage.** `getIdentityToken()` hits
+Privy's own API (confirmed: the exact "Too many requests" string lives in
+`@privy-io/api-base`'s rate-limit error class) — firing 6 calls in ~9
+seconds, then another 6 on every manual RETRY, was enough to trip Privy's
+own per-account rate limit. Hammering RETRY against a live rate limit
+just re-triggers it identically, which is exactly what got reported.
+Fixed two ways: `TOKEN_RETRY_DELAYS_MS` cut from 6 attempts/~8.7s to 3
+attempts/~2.5s (still enough for the brief post-auth race this exists
+for, far less likely to trip the limit), and RETRY now carries its own
+cooldown that grows with consecutive failures (5s, 10s, 15s… capped at
+30s) so a stuck session can't make its own situation worse by mashing the
+button. The wallet-link timeout added earlier this session now goes
+through the same cooldown path.
+
+**Sprint given a real speed bonus, per direct player feedback.**
+`SPRINT_SPEED_MULT` shipped at 1.0 (no bonus at all — see the flagged
+"legitimate thing to revisit later" note in `heistRun.ts`'s own comment)
+read, in practice, as "the sprint button does nothing": holding it could
+only ever cost stamina toward a full-stop `winded`, never buy anything
+back. Reported live alongside "no visible gauge" — the gauge exists (a
+thin 4px bar in the HUD, gated behind `hud.started` so it didn't even
+show before the first move) but was easy to miss entirely if it never
+actually did anything. Both fixed together: `SPRINT_SPEED_MULT` raised to
+**1.2** (the player's own proposed number, reasoned from how fast the
+police gap closes once you stop moving), and the HUD bar made harder to
+miss — labelled "SPRINT", taller (4px → 7px), and shown from the very
+first frame instead of only after the player's first input. **Not
+re-swept against CALIBRATION.md's P0 follow-up commitment-window
+targets** — this is a live rebalance from direct feedback, not a rerun of
+that harness; worth a fresh sweep later if the numbers need another pass,
+and it may also address the "screen goes red after 2 seconds" complaint
+above on its own, since sprint is now an actual way to claw back distance
+rather than a pure cost.
+
 ## P7 — perRun path chosen; `HeistPlay.sol` written and tested, not deployed
 
 **The user picked the path and gave the design directly**: perRun, not
