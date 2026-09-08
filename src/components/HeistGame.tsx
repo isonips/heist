@@ -320,7 +320,6 @@ export default function HeistGame() {
   const outroActive = hud.mode === 'paid' && hud.paidAtTick !== null && hud.tick - hud.paidAtTick < OUTRO_TICKS
   const windowOpen = hud.mode === 'armed'
   const committed = hud.mode === 'committed'
-  const carrying = hud.hands !== 'ticket' || hud.heldItem !== null
 
   const toggleSound = useCallback(() => {
     runRef.current.toggleSound()
@@ -403,9 +402,9 @@ export default function HeistGame() {
         >
           <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <PixelIcon name="siren" scale={2} />
-            {hud.windowLeft}s — ESCAPE NOW · ticket
+            {hud.windowLeft}s to decide — see below
           </span>
-          <span>HOLD · ticket + loot</span>
+          <span>ESCAPE or KEEP GOING</span>
         </div>
       ) : committed ? (
         <div
@@ -491,6 +490,45 @@ export default function HeistGame() {
             AH SHIT, HERE WE GO AGAIN
           </div>
         )}
+        {windowOpen && (
+          // The decision moment made an actual pause + a hard-to-miss
+          // overlay, per direct feedback ("le bandeau est peu visible et
+          // on ne sait pas comment l'activer") — the thin top banner
+          // above stays as reinforcement, but this is the real UI for it
+          // now. The world really is frozen behind this (see
+          // heistRun.ts's advance()/clock() — 'armed' is a pause), so
+          // there's no rush beyond the countdown itself.
+          <div
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: W * SCALE,
+              height: H * SCALE,
+              background: 'rgba(5,6,10,0.88)',
+              color: theme.palette.pale,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 10,
+              fontFamily: theme.type.family,
+              textAlign: 'center',
+              padding: 12,
+            }}
+          >
+            <div style={{ fontSize: theme.type.size.display, color: theme.palette.gold }}>TICKET SECURED</div>
+            <div style={{ fontSize: theme.type.size.body, maxWidth: 260 }}>
+              Escape now and keep the ticket — or keep going and try to hold onto whatever else you&apos;re
+              carrying too. Riskier: no more escaping after this.
+            </div>
+            <div style={{ fontSize: theme.type.size.display, color: theme.palette.sirenRed }}>{hud.windowLeft}s</div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => runRef.current.escapeNow()} style={buttonStyle}>ESCAPE — KEEP TICKET</button>
+              <button onClick={() => runRef.current.commitNow()} style={buttonStyle}>KEEP GOING</button>
+            </div>
+          </div>
+        )}
         {ended && !outroActive && (
           <div
             style={{
@@ -571,16 +609,6 @@ export default function HeistGame() {
           <span style={{ fontFamily: theme.type.family, fontSize: theme.type.size.body, color: theme.palette.concrete }}>
             {demo ? 'DEMO — nothing at stake' : `${hud.crossed} / ${ESCAPE_AT} crossings`}
           </span>
-          {windowOpen && (
-            <button onClick={() => runRef.current.escapeNow()} style={buttonStyle}>
-              ESCAPE NOW · TICKET
-            </button>
-          )}
-          {windowOpen && carrying && (
-            <span style={{ fontFamily: theme.type.family, fontSize: theme.type.size.feed, color: theme.palette.gold }}>
-              hold for ticket + loot
-            </span>
-          )}
           {committed && (
             <span style={{ fontFamily: theme.type.family, fontSize: theme.type.size.feed, color: theme.palette.sirenRed }}>
               no way out — hold to the end

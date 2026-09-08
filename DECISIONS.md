@@ -1821,6 +1821,45 @@ targets — that sweep's own numbers stay in CALIBRATION.md as a historical
 record of how 5.5 was reached, not something this entry retroactively
 edits.
 
+## Decision window made a real pause; threshold raised 10 → 15; police lowered again to the pre-lever baseline
+
+Three more pieces of direct feedback landed together:
+
+**"Still too fast" → `POLICE_PX` 4.7 → 4.0**, back to the exact
+pre-sprint-lever baseline from before this session's sprint work started
+(see that constant's own comment history) — now with the sprint speed
+bonus, its visibility fix, and this round's pause all stacked on top of
+it. Same caveat as every rebalance this session: live feedback, not a
+harness rerun.
+
+**"Le bandeau est peu visible et on ne sait pas comment l'activer" — the
+decision window is now an actual pause, not a banner competing with a
+still-moving world.** `advance()` now skips `staminaTick()`/`step()`/
+`collide()`/traffic/`law()`/`reinforce()`/`alerts()`/siren whenever
+`mode === 'armed'`; `clock()` returns immediately after handling
+`windowLeft` during 'armed', so the 60-second run clock doesn't drain
+during the pause either — only the decision countdown itself moves.
+`HeistGame.tsx` gained a full-size overlay (same visual weight as the
+end-of-run/crash-recovery screens) with the countdown and both choices
+spelled out as buttons: **ESCAPE — KEEP TICKET** (existing `escapeNow()`,
+unchanged) and a new **KEEP GOING** (`commitNow()` — the same transition
+`clock()` already makes once the countdown hits zero, just available
+immediately instead of only by waiting it out, since the window itself
+no longer has any reason to rush a decision). New `'Commit'` replay
+action alongside `'Escape'`, handled in `replay()`. The old small button
++ text hint in the bottom controls bar is removed — fully superseded by
+the overlay, and keeping both would have meant two different escape
+controls active at once.
+
+**`ESCAPE_AT` 10 → 15**, asked for alongside the pause itself — a later,
+clearer decision point rather than an earlier, murkier one. `RulesTab`
+reads the constant directly, so its copy updated with no separate edit.
+
+Not re-swept against CALIBRATION.md's targets (same as every rebalance
+this session) — determinism harness still passes (200/200), the pause
+logic doesn't touch RNG streams or drop mechanics, only which subsystems
+`advance()` calls while `mode === 'armed'`.
+
 ## P7 — perRun path chosen; `HeistPlay.sol` written and tested, not deployed
 
 **The user picked the path and gave the design directly**: perRun, not

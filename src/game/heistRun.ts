@@ -62,19 +62,25 @@ export const REIN_LEAD_S = 11
 // 4.0 was the original baseline; raised to 5.5 as part of the
 // commitment-window balance sweep once sprint/winded existed as a lever —
 // see CALIBRATION.md's P0 follow-up 3/4 for the full search. Lowered to
-// 4.7 (~15%, within the 10-20% asked for) per direct live-play feedback
-// — "caught too often" — after the sprint-speed and sprint-visibility
-// fixes still left the catch-up rate itself feeling too fast. This
-// scales every use of POLICE_PX at once (baseline closing speed, the
-// push-multiplied catch-up rate in law(), and secsToArrest()'s alert
-// thresholds), so slower closing also means more warning before
-// critical, not just a slower arrest. Not re-swept against
-// CALIBRATION.md's P0 follow-up targets — a live rebalance from direct
-// feedback, same as the sprint changes before it.
-export const POLICE_PX = 4.7
+// 4.7 (~15%) then 4.0 per two direct rounds of "still too fast" feedback
+// — the second cut lands back on the original pre-sprint-lever baseline
+// (see the comment above this one's history), now with the sprint speed
+// bonus, its visibility fix, and the decision-window pause all layered
+// on top of it. This scales every use of POLICE_PX at once (baseline
+// closing speed, the push-multiplied catch-up rate in law(), and
+// secsToArrest()'s alert thresholds), so slower closing also means more
+// warning before critical, not just a slower arrest. Not re-swept
+// against CALIBRATION.md's P0 follow-up targets — a live rebalance from
+// direct feedback, same as the sprint changes before it.
+export const POLICE_PX = 4.0
 export const POLICE_HEAD_START_S: [number, number] = [5, 7]
 export const TICK_MS = 110
-export const ESCAPE_AT = 10
+// Raised from 10 per direct feedback, paired with making the decision
+// window itself an actual pause (see 'armed' handling in advance()/
+// clock() below) rather than a small, easy-to-miss button while the
+// world kept moving — the two were asked for together: a later, clearer
+// decision point.
+export const ESCAPE_AT = 15
 // The decision window: WINDOW_S seconds that open the instant crossed
 // reaches ESCAPE_AT (see step()). Escaping inside it secures the ticket
 // only, forfeiting everything carried. Letting it lapse — the default,
@@ -87,6 +93,15 @@ export const ESCAPE_AT = 10
 // section). A short, visible, bounded countdown is a decision a player can
 // actually weigh against what's on the road; an open-ended survival
 // requirement wasn't.
+//
+// Direct feedback: the window used to run in real time — police, traffic,
+// and the main clock kept moving while it counted down, and the only cue
+// was a small button plus a line of text in the bottom bar, easy to miss
+// entirely ("on ne sait pas comment l'activer"). advance()/clock() now
+// treat 'armed' as an actual pause — nothing in the world moves and the
+// 60s run clock doesn't drain — while HeistGame.tsx shows a full-size
+// overlay with the countdown and both choices spelled out. Only
+// windowLeft itself still ticks during the pause.
 export const WINDOW_S = 10
 export const LOOT_FROM = 6
 export const LIVES_MAX = 3
@@ -201,7 +216,7 @@ export type LoggedInput = { tick: number; key: string; atMs: number }
  *  landed on — the complete record replay(seed, actions) needs to reproduce
  *  a run bit-for-bit. Movement reuses Dir; Escape/UseItem cover the other
  *  two buttons a player can press. */
-export type ReplayAction = Dir | 'Escape' | 'UseItem' | 'SprintDown' | 'SprintUp'
+export type ReplayAction = Dir | 'Escape' | 'Commit' | 'UseItem' | 'SprintDown' | 'SprintUp'
 export type ReplayInput = [tick: number, action: ReplayAction]
 
 export type Result = {
@@ -739,6 +754,19 @@ export class HeistRun {
     }
   }
 
+  /** The other half of the decision-window pause: commit early instead
+   *  of waiting out the full WINDOW_S countdown. Same transition
+   *  clock() already does once windowLeft hits 0 — this just lets a
+   *  player who's already decided skip the wait, since the window is
+   *  now a real pause (nothing moves until it resolves one way or the
+   *  other) rather than something ticking down in the background. */
+  commitNow(): void {
+    if (this.state.mode === 'armed') {
+      this.actionLog.push([this.tick, 'Commit'])
+      this.state = { ...this.state, windowLeft: 0, mode: 'committed' }
+    }
+  }
+
   /** Hold to sprint. Only logs on an actual transition (idempotent
    *  repeated calls, matching how a real held key generates repeat
    *  keydown events) so the replay log doesn't fill up with no-ops. */
@@ -912,25 +940,27 @@ export class HeistRun {
     if (this.ms < 1000) return
     this.ms -= 1000
 
-    // The decision window ticks down on the same one-second cadence as the
-    // main clock. Inaction is the default outcome by design (see
-    // WINDOW_S): letting it run out commits the run rather than failing
-    // it — the player has to actively press Escape to take the safe exit
-    // instead.
+    // The decision window is a real pause (direct feedback — see
+    // ESCAPE_AT/WINDOW_S's own comments): only windowLeft moves while
+    // 'armed', not the main run clock below. Inaction is still the
+    // default outcome by design: letting it run out commits the run
+    // rather than failing it — the player has to actively press Escape
+    // to take the safe exit instead.
     if (this.state.mode === 'armed') {
       const w = this.state.windowLeft - 1
       this.state = w > 0 ? { ...this.state, windowLeft: w } : { ...this.state, windowLeft: 0, mode: 'committed' }
+      return
     }
 
     const t = this.state.timeLeft - 1
     if (t > 0) { this.state = { ...this.state, timeLeft: t }; return }
     // Clock hits zero. Reaching it at all means the ticket was never
-    // escaped away — 'committed', or still 'armed' if the window's own
-    // countdown hadn't finished yet, both pay out everything: running out
-    // the main clock without escaping is itself "held to the end". Short
+    // escaped away ('committed' — 'armed' can't reach this branch
+    // anymore, it returns above): running out the main clock without
+    // escaping is itself "held to the end", paying out everything. Short
     // of ESCAPE_AT (mode never left 'run') it's a loss, same shape as
     // being caught.
-    if (this.state.mode === 'committed' || this.state.mode === 'armed') {
+    if (this.state.mode === 'committed') {
       this.paidAtTick = this.tick
       this.state = { ...this.state, timeLeft: 0, mode: 'paid', heldToEnd: true }
     } else {
@@ -978,17 +1008,27 @@ export class HeistRun {
   /** One full tick: input has already been applied via onKey(). */
   advance(): void {
     this.tick++
-    this.staminaTick()
-    this.step()
-    if (this.live()) this.collide()
-    this.trafficOff += this.trafficPx() * this.windedMult()
-    this.law()
-    this.reinforce()
+    // 'armed' is a real pause now (direct feedback — the decision window
+    // used to run in real time, easy to miss under everything still
+    // moving). Nothing below moves the world while it's up; clock()
+    // still runs, but only windowLeft ticks inside it during 'armed' —
+    // see clock()'s own gate.
+    const paused = this.state.mode === 'armed'
+    if (!paused) {
+      this.staminaTick()
+      this.step()
+      if (this.live()) this.collide()
+      this.trafficOff += this.trafficPx() * this.windedMult()
+      this.law()
+      this.reinforce()
+    }
     this.clock()
-    this.alerts()
-    if (this.live() && this.started) {
-      const s2a = this.secsToArrest()
-      if (this.tick % (s2a < 6 ? 4 : 6) === 0) this.siren()
+    if (!paused) {
+      this.alerts()
+      if (this.live() && this.started) {
+        const s2a = this.secsToArrest()
+        if (this.tick % (s2a < 6 ? 4 : 6) === 0) this.siren()
+      }
     }
     if (this.state.mode === 'caught' && this.lostAt >= 0 && this.tick >= this.lostAt) {
       this.state = { ...this.state, mode: 'lost' }
@@ -1249,6 +1289,7 @@ export function replay(
     while (ai < actions.length && actions[ai][0] === run.tick) {
       const [, action] = actions[ai]
       if (action === 'Escape') run.escapeNow()
+      else if (action === 'Commit') run.commitNow()
       else if (action === 'UseItem') run.useItem()
       else if (action === 'SprintDown') run.setSprinting(true)
       else if (action === 'SprintUp') run.setSprinting(false)
