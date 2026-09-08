@@ -1504,6 +1504,22 @@ first real click-through remains the only way these surface. Worth
 treating every "it doesn't work" report from here on as a likely real
 bug report, not user error, given the track record so far (two for two).
 
+**Third bug found via local Playwright, dev-only, not production-affecting:
+PROFILE crashes if `NEXT_PUBLIC_PRIVY_APP_ID` is completely unset.**
+`usePrivy()` throws ("You need to wrap your application with the
+<PrivyProvider>...") the instant anything calls it with no `<PrivyProvider>`
+in the tree at all — which only happens when the env var is entirely
+missing (the `mounted`-gate fix above still renders `{children}` with no
+provider in that case). Confirmed via Playwright against `npm run dev`:
+reproduces with the var totally unset, does **not** reproduce once any
+app ID (even a placeholder) is present — so this cannot affect the actual
+deployment, which has a real Privy app ID configured. Left unfixed,
+deliberately: it's a local-dev-only rough edge (a fresh clone with no
+`.env.local` yet would hit it on the PROFILE tab), not a risk to the
+running app, and not worth an error boundary or a placeholder-provider
+workaround for a case nobody hits in production. Noted here rather than
+silently dropped.
+
 ## P7 — perRun path chosen; `HeistPlay.sol` written and tested, not deployed
 
 **The user picked the path and gave the design directly**: perRun, not

@@ -295,3 +295,70 @@ README.md replaced entirely; updated again this session for the backend.
   `window` is undefined) and made the page hang → fixed by muting sound in
   the three harness bots (`run.soundOn = false`), not by working around it
   with more chunking alone.
+
+## Session 5 — carte-blanche pass on the arbitrage doc (P3/P4 correction, P7/P10 contract rewrite)
+
+Given full autonomy for one pass ("fait tout ce que tu peux faire, ne met
+rien en attente de ma validation... tu as carte blanche"), against a
+direct-answers document that corrected two of my own prior readings and
+settled the rest. Order followed was the doc's own: fix P3/P4 → E2E
+smoke pass (P9) → HeistPlay wiring status → rest of the contracts.
+
+**P3 (économie du butin) — my prior framing was wrong, corrected.** The
+45/45/10 retribution/pot/treasury split is a target *allocation*, not a
+full-payout promise; the wallet is banked roughly 1 game in 9, so most of
+the retribution line never leaves the till on any given run — that's
+expected, not a gap to fix. The wallet table (0/10/20 USDG) stays exactly
+as-is, permanently. Rules tab now shows only the three raw wallet-content
+odds (nothing/refund/double), no RTP or split language. `economy.ts`,
+`CALIBRATION.md`, `RulesTab.tsx`, `DECISIONS.md` all corrected; the
+superseded original P3 writeup kept in a collapsed `<details>` for the
+record rather than deleted.
+
+**P4 (codes) — also corrected.** Redeeming any code (manual, `ten_wins`,
+or `referral` alike) unlocks lifetime status immediately, always — no
+deferred condition, ever. The $500-play-volume mechanic is a *separate*
+thing: it's how a referrer earns a new code to give out once their
+referred player crosses that volume, not a condition on the referred
+player's own unlock. `/api/codes/redeem` and `/api/play/finish`'s
+referral block rewritten accordingly; new `profiles.referral_reward_granted`
+column guards the referrer-reward firing once per referred player.
+
+**P9 (E2E path) — verified what this sandbox can verify.** Local
+Playwright against `npm run dev` confirmed DEMO mode and all five tabs
+(PLAY/RULES/MY HAUL/DRAW/PROFILE) render and play correctly with no
+console errors. Found one real bug this way: `usePrivy()` throws if
+`NEXT_PUBLIC_PRIVY_APP_ID` is entirely unset (not the production case —
+confirmed not to reproduce once any app ID is present) — documented as a
+known, deliberately-unfixed dev-only gap in `DECISIONS.md`. The real
+PLAY→connect→pay→win→bonus chain against live Supabase/Privy still can't
+be exercised from this sandbox (same standing network block as every
+prior session) — see the message to the user for exactly what to click
+through to confirm it live.
+
+**P7/P10 (contracts) — `HeistPlay.sol` rewritten for the corrected key
+model, P10's decimals requirements built out.** `owner`/`operator`/
+`treasury` enforced as three genuinely distinct roles: `treasury` can
+start unset (`address(0)`) since the real multisig doesn't exist yet, and
+changes only via a 2-step `proposeTreasury`/`acceptTreasury` (no
+single-step setter, ever); `owner` and `operator` are enforced distinct
+everywhere a role can change; `operator` (a hot server key) is bounded by
+new owner-only per-tx/daily payout caps, plus an explicit on-chain
+solvency check in `payout()` independent of `SafeERC20`'s own revert
+behavior. New `MockUSDG6` mock and a dedicated test block prove the
+contract moves raw token units correctly against a 6-decimal token (the
+real USDG's actual decimals, verified on-chain this session — see
+`DECISIONS.md` P10) rather than ever assuming the ERC20-default 18. New
+`scripts/verifyToken.js` is a mandatory pre-deploy guard (chainId,
+bytecode, `symbol()`, `decimals()` against a live RPC) — confirmed it
+correctly aborts given this sandbox's own blocked egress to the target
+RPC, rather than deploying on a guess. 35 contract tests passing (was
+21). **Still not deployed anywhere** — per the standing instruction,
+repeated throughout the arbitrage doc, that survives even this round's
+carte blanche.
+
+Every change this round: contracts committed and pushed after their own
+test pass; app-side changes (P3/P4) committed and pushed after their own
+verification pass. Nothing held back pending approval, per the explicit
+instruction — except any future smart-contract *deployment*, which stays
+blocked on the user regardless of how much autonomy is granted elsewhere.
