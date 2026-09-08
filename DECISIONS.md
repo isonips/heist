@@ -1605,6 +1605,42 @@ and it may also address the "screen goes red after 2 seconds" complaint
 above on its own, since sprint is now an actual way to claw back distance
 rather than a pure cost.
 
+## Third real-play round: the rate-limit fix wasn't enough, and sprint still wasn't visible
+
+**Still "Too many requests" after 18 real minutes of waiting — the
+previous round's fix (cutting the retry burst from 6 calls to 3) reduced
+the problem but didn't remove its cause.** Root cause, found on a closer
+read of the SDK: `getIdentityToken()` is an imperative function that
+calls Privy's API *every time it's invoked*, full stop — there is no
+"only 3 calls now" that fixes that, only "call it less" vs. "don't call
+it at all." Switched to Privy's own `useIdentityToken()` **hook**
+instead, which exposes the same value as reactive state Privy's SDK
+already maintains internally — reading it costs nothing, so waiting for
+it to go non-null (a plain `useEffect` dependency) makes zero network
+calls of our own, and there is nothing left in `AuthSync.tsx` that can
+trip Privy's rate limit anymore, no matter how many times a session
+fails and retries. The manual-retry cooldown (5s/10s/15s.../30s, added
+last round) stays, now purely to protect our own `/api/auth/privy`
+endpoint against a mashed RETRY, not Privy's.
+
+**Sprint's +20% (previous round) genuinely wasn't perceptible, correctly
+reported back.** Re-reading `draw()`: the thief's sprite never changed
+in any way while sprinting — same colour, same pose, only a small,
+easy-to-miss timing difference in how fast hops resolved. There was no
+bug in the multiplier itself (confirmed applying correctly), just zero
+dedicated visual feedback tied to the state at all — a 20% timing change
+with no visual cue is invisible by construction, no numeric increase
+fixes that on its own. Added two direct, correctly-gated cues instead of
+guessing at a bigger number: the thief's jumpsuit tints gold
+(`cell()`'s new `'sprint'` mode) and two short gold speed-lines trail
+behind him, both driven by the exact same `sprintHeld && staminaPct > 0
+&& !winded` condition the speed multiplier itself uses — so if the tint
+isn't showing, the speed genuinely isn't being applied either, which
+makes this diagnostic as well as cosmetic. `SPRINT_SPEED_MULT` left at
+1.2 for now (the player's own number from last round) rather than
+compounding two unverified changes at once; worth revisiting the
+magnitude once the visual cue itself is confirmed working.
+
 ## P7 — perRun path chosen; `HeistPlay.sol` written and tested, not deployed
 
 **The user picked the path and gave the design directly**: perRun, not

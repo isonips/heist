@@ -16,40 +16,41 @@
 // user object, not a cached token, so it updates the moment the embedded
 // wallet actually exists.
 //
-// Even with the wallet ready, getIdentityToken() (an imperative fetch)
-// can still return null for a beat — observed live on a *wallet* login
-// (signature, no embedded-wallet creation lag at all), so this isn't the
-// same race as the wallet one above; it's the identity token itself
-// taking a moment to reflect a just-completed auth. Retried with a short
-// backoff rather than failing on the first null, and a genuine failure
-// now offers a manual retry — the previous version had neither, so a
-// stuck token would strand the whole session (PLAY/PROFILE/DRAW gates
-// all check identity.ts, which never got set) until a hard reload.
-import { getIdentityToken, usePrivy } from '@privy-io/react-auth'
+// Real bug found live, twice: the identity token can also lag behind
+// `authenticated`/`user.wallet` by a beat. The first fix (since replaced)
+// polled the imperative getIdentityToken() with a retry-and-backoff loop
+// — which turned out to be *itself* the actual bug: getIdentityToken()
+// hits Privy's own API on every call (confirmed — "Too many requests" is
+// @privy-io/api-base's own rate-limit error text), and repeated bursts of
+// it (our retries, then more on every manual RETRY) tripped Privy's rate
+// limit hard enough that it didn't clear even after 18 real minutes of
+// waiting. Switched to Privy's own `useIdentityToken()` hook instead:
+// reactive state Privy's SDK already maintains internally, not a network
+// call we make ourselves — waiting for it to go non-null costs us zero
+// extra requests, so there is nothing left here that can trip a limit at
+// all, regardless of how many times auth is retried.
+import { useIdentityToken, usePrivy } from '@privy-io/react-auth'
 import { useEffect, useRef, useState } from 'react'
 import { theme } from '@/design/theme'
 import { getIdentity, setIdentity, type Identity } from '@/game/identity'
 import { reconcileIdentity, snapshotActive } from '@/game/profile'
 
-// Short and few — this is only meant to ride out a beat right after auth,
-// not paper over a real problem. The original 6-attempt/~8.7s burst was
-// itself the cause of a real bug found live: getIdentityToken() hits
-// Privy's own API (confirmed — see @privy-io/api-base's rate-limit error
-// text), and firing 6 calls in ~9s, then another 6 on every manual RETRY,
-// was enough to trip Privy's own rate limit — "Too many requests" was our
-// own retry loop's doing, not a real outage. 3 attempts / ~2.5s is still
-// enough for the race this exists for.
-const TOKEN_RETRY_DELAYS_MS = [0, 700, 1800]
+// How long to wait for Privy's own identityToken state to go non-null
+// before treating it as stuck rather than "just a beat behind" — this is
+// a plain timeout on *reactive state*, not a retry loop, so it makes no
+// network calls of its own.
+const TOKEN_WAIT_MS = 8000
 // After any failure, RETRY is disabled for a cooldown that grows with
-// consecutive failures (5s, 10s, 15s... capped at 30s) — specifically so
-// hammering RETRY against a live rate-limit can't make it worse, which is
-// exactly what happened before this existed ("même résultat en essayant
-// à nouveau", immediately, every time).
+// consecutive failures (5s, 10s, 15s... capped at 30s) — belt-and-braces
+// against hammering /api/auth/privy (our own server) on repeat failures;
+// no longer load-bearing for the Privy rate limit specifically now that
+// we don't poll Privy's API at all, but still worth keeping.
 const RETRY_COOLDOWN_STEP_S = 5
 const RETRY_COOLDOWN_MAX_S = 30
 
 export default function AuthSync() {
   const { ready, authenticated, user } = usePrivy()
+  const { identityToken } = useIdentityToken()
   const hasWallet = Boolean(user?.wallet?.address)
   const [error, setError] = useState<string | null>(null)
   const [retryNonce, setRetryNonce] = useState(0)
@@ -62,21 +63,13 @@ export default function AuthSync() {
   }
 
   useEffect(() => {
-    if (!ready || !authenticated || !hasWallet) return
+    if (!ready || !authenticated || !hasWallet || !identityToken) return
     if (getIdentity()) return
     let cancelled = false
     ;(async () => {
       setError(null)
       try {
         const guestSnapshot = snapshotActive() // must run before identity switches
-        let identityToken: string | null = null
-        for (const delay of TOKEN_RETRY_DELAYS_MS) {
-          if (cancelled) return
-          if (delay) await new Promise((resolve) => setTimeout(resolve, delay))
-          identityToken = await getIdentityToken()
-          if (identityToken) break
-        }
-        if (!identityToken) throw new Error('Could not read your Privy identity token after several tries.')
         const res = await fetch('/api/auth/privy', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -96,7 +89,7 @@ export default function AuthSync() {
       }
     })()
     return () => { cancelled = true }
-  }, [ready, authenticated, hasWallet, retryNonce])
+  }, [ready, authenticated, hasWallet, identityToken, retryNonce])
 
   useEffect(() => {
     if (cooldownS <= 0) return
@@ -104,24 +97,33 @@ export default function AuthSync() {
     return () => clearInterval(timer)
   }, [cooldownS])
 
-  // Bug found live (P9 smoke test): the effect above returns immediately,
-  // silently, while `!hasWallet` — correct for the brief embedded-wallet-
-  // creation lag it was written for, but if a wallet never links at all
-  // (Privy dashboard misconfigured, or a wallet login that fails to
-  // attach), this used to hang forever with no error, no banner, and
-  // therefore no RETRY — "Finishing sign-in…" with no way out, since the
-  // banner below only ever rendered from the *other* effect's catch
-  // block, which this path never reaches. This timer is independent of
-  // that one specifically so a stuck `hasWallet` surfaces its own error
-  // instead of hanging silently.
+  // Bug found live (P9 smoke test): the effect above used to return
+  // immediately, silently, while `!hasWallet` — correct for the brief
+  // embedded-wallet-creation lag it was written for, but if a wallet
+  // never links at all (Privy dashboard misconfigured, or a wallet login
+  // that fails to attach), this used to hang forever with no error, no
+  // banner, and therefore no RETRY — "Finishing sign-in…" with no way
+  // out. This timer is independent of the main effect so a stuck
+  // `hasWallet` surfaces its own error instead of hanging silently.
   useEffect(() => {
     if (!ready || !authenticated || hasWallet) return
     const timer = setTimeout(() => {
       setError('No wallet is linked to this sign-in yet. Disconnect and try again, or retry.')
       registerFailure()
-    }, 8000)
+    }, TOKEN_WAIT_MS)
     return () => clearTimeout(timer)
   }, [ready, authenticated, hasWallet, retryNonce])
+
+  // Same shape, for the identity token itself: hasWallet but the token
+  // never shows up in Privy's own state.
+  useEffect(() => {
+    if (!ready || !authenticated || !hasWallet || identityToken) return
+    const timer = setTimeout(() => {
+      setError('Could not read your Privy identity token. Disconnect and try again, or retry.')
+      registerFailure()
+    }, TOKEN_WAIT_MS)
+    return () => clearTimeout(timer)
+  }, [ready, authenticated, hasWallet, identityToken, retryNonce])
 
   // A silent console.error here was worse than useless the one time this
   // actually broke — nobody watching the game screen has devtools open.

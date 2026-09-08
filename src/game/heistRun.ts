@@ -988,7 +988,7 @@ export class HeistRun {
   }
 
   // -------------------------------------------------------------- draw
-  private cell(ctx: CanvasRenderingContext2D, rows: string[], px: number, py: number, opts?: { body?: string; shade?: string; light?: string; flip?: boolean; mode?: 'flash' }) {
+  private cell(ctx: CanvasRenderingContext2D, rows: string[], px: number, py: number, opts?: { body?: string; shade?: string; light?: string; flip?: boolean; mode?: 'flash' | 'sprint' }) {
     const o = opts || {}
     for (let y = 0; y < rows.length; y++) {
       for (let x = 0; x < rows[y].length; x++) {
@@ -1000,6 +1000,13 @@ export class HeistRun {
         let hex = PAL[ch]
         if (!hex) continue
         if (o.mode === 'flash') hex = (ch === 'W' || ch === 'P' || ch === 'G') ? PAL.K : PAL.P
+        // 'sprint': the jumpsuit's stripe colour goes gold while a real
+        // speed bonus is actually applying — a direct answer to "no
+        // visible acceleration" that isn't just a bigger number, and a
+        // correct one: it's tied to sprintHeld/staminaPct/winded exactly
+        // like the speed multiplier itself (see draw()'s call site), so
+        // if the tint isn't showing, the speed genuinely isn't either.
+        else if (o.mode === 'sprint' && ch === 'P') hex = PAL.G
         const dx = o.flip ? (rows[y].length - 1 - x) : x
         ctx.fillStyle = hex
         ctx.fillRect(px + dx, py + y, 1, 1)
@@ -1178,8 +1185,18 @@ export class HeistRun {
       // else: they're already gone — nothing more to draw here.
     } else {
       this.shadow(ctx, this.tx + 4, 14, feet, 'dither50')
+      const sprinting = this.sprintHeld && this.state.staminaPct > 0 && !this.state.winded
+      if (sprinting) {
+        // Speed-line trail behind the thief, on top of the gold tint
+        // below — two short streaks per side, offset a tick apart so
+        // they read as motion rather than a static decoration.
+        ctx.fillStyle = PAL.G
+        const streakY = feet - 14 - (this.tick % 2) * 3
+        ctx.fillRect(this.tx - 6, streakY, 4, 1)
+        ctx.fillRect(this.tx - 10, streakY + 4, 3, 1)
+      }
       const flash = ((this.state.mode === 'hit' || this.state.blink > 0) && this.tick % 2 === 0) ? 'flash' : undefined
-      this.cell(ctx, this.thiefRows(), this.tx, feet - 24, { mode: flash })
+      this.cell(ctx, this.thiefRows(), this.tx, feet - 24, { mode: flash ?? (sprinting ? 'sprint' : undefined) })
     }
 
     if (this.critical && this.live()) {
