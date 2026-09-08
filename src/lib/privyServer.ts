@@ -49,3 +49,28 @@ export async function verifyPrivyIdentityToken(idToken: string): Promise<string 
     return null
   }
 }
+
+/** Fallback path, used only when the identity token itself couldn't be
+ *  obtained client-side (see AuthSync.tsx — real bug found live: a
+ *  session's identity token can come back null indefinitely, on every
+ *  path tried, for reasons outside this app's control). Verifies Privy's
+ *  standard session access token instead (usePrivy().getAccessToken() —
+ *  a different, always-issued token, not the identity-token feature) via
+ *  local JWT signature verification (verifyAuthToken, no network call
+ *  after its verification key is first fetched and cached), then
+ *  resolves the user via `getUser(userId)`. That last call IS one of the
+ *  strictly-rate-limited legacy endpoints per @privy-io/server-auth's own
+ *  doc comment — acceptable here specifically because this path only
+ *  runs when the (rate-limit-friendly) idToken path has already failed,
+ *  so it's a rare fallback, not the hot path. */
+export async function verifyPrivyAccessToken(accessToken: string): Promise<string | null> {
+  const privy = getClient()
+  if (!privy) return null
+  try {
+    const claims = await privy.verifyAuthToken(accessToken)
+    const user = await privy.getUser(claims.userId)
+    return addressFromPrivyUser(user)
+  } catch {
+    return null
+  }
+}

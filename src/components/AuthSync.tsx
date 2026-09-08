@@ -16,45 +16,50 @@
 // user object, not a cached token, so it updates the moment the embedded
 // wallet actually exists.
 //
-// Identity token history (three real bugs in a row, each fixing the last
-// without solving the underlying problem):
+// Identity token history (four real bugs in a row on this one exchange,
+// each fixing the last without solving the underlying problem):
 // 1. First version polled the imperative getIdentityToken() with a
 //    retry-and-backoff loop — turned out to be the bug itself:
 //    getIdentityToken() hits Privy's own API on every call ("Too many
 //    requests" is @privy-io/api-base's own rate-limit error text), and
 //    repeated bursts tripped Privy's rate limit hard enough that it
 //    didn't clear even after 18 real minutes of waiting.
-// 2. Switched to Privy's reactive `useIdentityToken()` hook, which reads
-//    state the SDK already maintains — no network call of our own. Fixed
-//    the rate limit, but then the hook's value was reported to simply
-//    stay null forever on a fresh sign-in, with no fallback — a plain
-//    reactive read isn't enough if Privy's SDK hasn't already populated
-//    that state through some other path yet.
-// 3. Current version: prefer the hook (costs nothing when it works), but
-//    if it hasn't populated after a short grace period, fall back to
-//    exactly ONE imperative getIdentityToken() call — not a loop. One
-//    call per sign-in attempt is negligible rate-limit risk while still
-//    covering the case the hook alone can't.
-import { getIdentityToken, useIdentityToken, usePrivy } from '@privy-io/react-auth'
+// 2. Switched to Privy's reactive `useIdentityToken()` hook — no network
+//    call of our own. Fixed the rate limit, but the hook's value was
+//    reported to simply stay null forever on a fresh sign-in.
+// 3. Added a single imperative getIdentityToken() fallback after a grace
+//    period — still failed the same way, repeatedly, confirming this
+//    isn't a timing race: the identity token genuinely isn't obtainable
+//    for some sessions, by any client-side path, for reasons outside
+//    this app's control (very possibly a lasting effect of #1's abuse
+//    detection, or the feature needing dashboard enablement — no way to
+//    confirm from here).
+// 4. Current version: stop depending on the identity token at all when it
+//    won't come. usePrivy().getAccessToken() reads Privy's standard
+//    session access token instead — a different, always-issued token,
+//    not the identity-token feature specifically. Tried second (after a
+//    brief chance for the identity token to show up on its own, since
+//    that path is the cheaper one server-side), and the server
+//    (privyServer.ts's new verifyPrivyAccessToken) accepts either.
+import { useIdentityToken, usePrivy } from '@privy-io/react-auth'
 import { useEffect, useRef, useState } from 'react'
 import { theme } from '@/design/theme'
 import { getIdentity, setIdentity, type Identity } from '@/game/identity'
 import { reconcileIdentity, snapshotActive } from '@/game/profile'
 
-// Grace period for the reactive hook to populate on its own before the
-// single imperative fallback call fires.
+// Grace period for the reactive identity-token hook to populate on its
+// own before falling back to the access token.
 const HOOK_GRACE_MS = 1500
 // How long to wait for a wallet to link before treating it as stuck.
 const WALLET_WAIT_MS = 8000
 // After any failure, RETRY is disabled for a cooldown that grows with
 // consecutive failures (5s, 10s, 15s... capped at 30s) — protects our own
-// /api/auth/privy endpoint (and the single fallback call above) against a
-// mashed RETRY button.
+// /api/auth/privy endpoint against a mashed RETRY button.
 const RETRY_COOLDOWN_STEP_S = 5
 const RETRY_COOLDOWN_MAX_S = 30
 
 export default function AuthSync() {
-  const { ready, authenticated, user } = usePrivy()
+  const { ready, authenticated, user, getAccessToken } = usePrivy()
   const { identityToken: hookToken } = useIdentityToken()
   const hasWallet = Boolean(user?.wallet?.address)
   const [error, setError] = useState<string | null>(null)
@@ -75,17 +80,22 @@ export default function AuthSync() {
       setError(null)
       try {
         const guestSnapshot = snapshotActive() // must run before identity switches
-        let token = hookToken
-        if (!token) {
+        let identityToken = hookToken
+        if (!identityToken) {
           await new Promise((resolve) => setTimeout(resolve, HOOK_GRACE_MS))
           if (cancelled) return
-          token = hookToken || (await getIdentityToken())
+          identityToken = hookToken
         }
-        if (!token) throw new Error('Could not read your Privy identity token.')
+        // Access token is Privy's standard, always-issued session token —
+        // fetched whenever the identity token isn't in hand yet, as the
+        // reliable fallback (see the file header). Cheap to call: reads
+        // cached/refreshed state, not a fresh network round trip per call.
+        const accessToken = identityToken ? null : await getAccessToken()
+        if (!identityToken && !accessToken) throw new Error('Could not read your Privy session token.')
         const res = await fetch('/api/auth/privy', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ identityToken: token }),
+          body: JSON.stringify({ identityToken, accessToken }),
         })
         const data = (await res.json().catch(() => ({}))) as { address?: string; error?: string }
         if (!res.ok || !data.address) throw new Error(data.error ?? 'Could not sign in.')
@@ -101,7 +111,7 @@ export default function AuthSync() {
       }
     })()
     return () => { cancelled = true }
-  }, [ready, authenticated, hasWallet, hookToken, retryNonce])
+  }, [ready, authenticated, hasWallet, hookToken, retryNonce, getAccessToken])
 
   useEffect(() => {
     if (cooldownS <= 0) return

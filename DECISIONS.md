@@ -1725,6 +1725,44 @@ was only unavailable while USE ITEM lived there, so disabling items
 made the player's original ask (Space) actually workable. No key
 conflicts left: arrows move, Space sprints, nothing is bound to Z yet.
 
+## Fifth real-play round: identity token genuinely unobtainable — added a second, independent verification path
+
+**Still "Could not read your Privy identity token" — the fourth attempt
+on this exact exchange, and the third code-side patch to fail
+identically.** Three different mechanisms (a retry loop, a reactive
+hook, the hook plus a single imperative fallback) all came back empty in
+the same way. That consistency is itself the signal: this stopped
+looking like a timing race rounds ago and reads now as the identity
+token genuinely not being obtainable for this session by any client-side
+path — possibly a lasting effect of the very first round's rate-limit
+trip, possibly something about the feature's configuration; neither is
+something this sandbox can confirm or fix from here.
+
+**Rather than a fourth patch on the same mechanism, added a second,
+independent one: Privy's standard session access token.**
+`usePrivy().getAccessToken()` reads a different, always-issued Privy
+token — not the identity-token feature specifically. `privyServer.ts`
+gained `verifyPrivyAccessToken()` (`verifyAuthToken()` — local JWT
+signature check, no network call after its key is first cached — then
+`getUser(userId)` to resolve the address). That `getUser(userId)` call
+is one of @privy-io/server-auth's own explicitly-flagged
+strictly-rate-limited legacy methods (its doc comment says so directly)
+— acceptable specifically because this path only runs as a fallback,
+after the cheap idToken path has already failed, so it's rare by
+construction, not the hot path. `/api/auth/privy` now accepts either
+`identityToken` or `accessToken` and tries whichever is present;
+`AuthSync.tsx` tries the identity token first (still free when it works)
+and calls `getAccessToken()` only once that's given up.
+
+If this still fails, the identity token is confirmed dead for this
+session/account by every mechanism available from this codebase, and
+the access-token path becoming the one that actually works would be
+strong independent confirmation of that; if access token *also* fails,
+that points somewhere this sandbox has no way to diagnose (Privy account
+state, a lasting IP-level block from the original rate-limit trip) and
+the next real step is checking Privy's own dashboard directly, or trying
+a different network/browser to rule out an IP-level hold.
+
 ## P7 — perRun path chosen; `HeistPlay.sol` written and tested, not deployed
 
 **The user picked the path and gave the design directly**: perRun, not
