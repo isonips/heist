@@ -1975,3 +1975,35 @@ Three concrete follow-ups, all done this round:
    from an environment with real network access as the actual pre-deploy
    step. **Still not deployed anywhere, per the standing instruction.**
 
+
+## Admin stats panel (`/admin`), gated to owner/treasury wallets
+
+New, requested directly: a dashboard for pulling numbers to post about
+the game — games played, unique players, today's pot, total redistributed
+(loot+prize payouts, all-time), projected treasury fees, and the best
+single-run crossing count with its player.
+
+**Two-layer gate, not one.** `/admin` (`src/app/admin/page.tsx`) hides
+its content client-side for anyone not signed in, but the actual data
+comes from `GET /api/admin/stats`, which independently checks the
+session address against `src/lib/adminAuth.ts`'s allowlist — a
+client-only gate is trivial to bypass by hitting the API route directly,
+so the real enforcement is server-side. `ADMIN_WALLETS` (comma-separated,
+env-configured) defaults to the owner wallet on record
+(`0xDa784752645C951622021D09a44e3E5CD2296613`) if unset; add the treasury
+multisig's address to that env var once it exists — no code change
+needed.
+
+**"Treasury fees" is explicitly labeled projected, not recorded** — the
+ledger has no `reason` for the treasury cut at all (it only ever exists
+on-chain, inside `HeistPlay.play()`, once that contract is deployed);
+what's shown is `gamesPlayed * PLAY_PRICE_USDG * TREASURY_PCT`, which is
+0 today since `PLAY_PRICE_USDG` is. Made this explicit in the panel's own
+copy rather than presenting a number that looks real but isn't yet.
+
+**Best-run lookup added a small RPC (`admin_best_player`, migration
+`admin_best_player_rpc`)** rather than scanning a page of `play_results`
+client-side — `order by (result->>'crossed')::int desc limit 1` done in
+Postgres is correct regardless of table size; a client-side scan over
+however many rows got fetched would have quietly given the wrong answer
+once the table outgrew that page.
