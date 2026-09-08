@@ -62,17 +62,16 @@ export const REIN_LEAD_S = 11
 // 4.0 was the original baseline; raised to 5.5 as part of the
 // commitment-window balance sweep once sprint/winded existed as a lever —
 // see CALIBRATION.md's P0 follow-up 3/4 for the full search. Lowered to
-// 4.7 (~15%) then 4.0 per two direct rounds of "still too fast" feedback
-// — the second cut lands back on the original pre-sprint-lever baseline
-// (see the comment above this one's history), now with the sprint speed
-// bonus, its visibility fix, and the decision-window pause all layered
-// on top of it. This scales every use of POLICE_PX at once (baseline
-// closing speed, the push-multiplied catch-up rate in law(), and
-// secsToArrest()'s alert thresholds), so slower closing also means more
-// warning before critical, not just a slower arrest. Not re-swept
-// against CALIBRATION.md's P0 follow-up targets — a live rebalance from
-// direct feedback, same as the sprint changes before it.
-export const POLICE_PX = 4.0
+// 4.7 (~15%), then 4.0 (the original baseline) per two rounds of "still
+// too fast," then nudged back up to 4.35 once 4.0 turned out "a peine
+// trop lente" — splitting the difference between the two. This scales
+// every use of POLICE_PX at once (baseline closing speed, the
+// push-multiplied catch-up rate in law(), and secsToArrest()'s alert
+// thresholds), so slower closing also means more warning before
+// critical, not just a slower arrest. Not re-swept against
+// CALIBRATION.md's P0 follow-up targets — a live rebalance from direct
+// feedback, same as the sprint changes before it.
+export const POLICE_PX = 4.35
 export const POLICE_HEAD_START_S: [number, number] = [5, 7]
 export const TICK_MS = 110
 // Raised from 10 per direct feedback, paired with making the decision
