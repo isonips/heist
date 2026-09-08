@@ -1763,6 +1763,48 @@ state, a lasting IP-level block from the original rate-limit trip) and
 the next real step is checking Privy's own dashboard directly, or trying
 a different network/browser to rule out an IP-level hold.
 
+**Confirmed fixed** — the access-token fallback resolved sign-in. First
+real PLAY run followed.
+
+## Sixth real-play round: silent mid-run freeze — extensively probed, not reproduced, added a watchdog
+
+**First real PLAY run (crossed=17, well past ESCAPE_AT) froze solid: the
+thief, police, and traffic all stopped, no error, no summary screen.**
+Investigated two ways before touching any code:
+
+1. 3000 trials of the existing `runGreedyBotTrial` harness (real
+   `HeistRun.advance()`, holding past the window instead of escaping,
+   same as a player pushing for more loot) — reached crossed up to 29,
+   zero exceptions, zero stuck states.
+2. A second probe adding `run.draw()` against a stub canvas context every
+   tick (the bot harness never calls `draw()` at all, so this covered
+   ground the first pass couldn't) plus toggling sprint on and off —
+   2000 more trials, crossed up to 45, still zero exceptions.
+
+Both came back completely clean — 5000 combined trials found no
+reproducible bug in the engine or the renderer, well past the crossing
+count where this happened live. That doesn't mean nothing is wrong; it
+means whatever caused it isn't a simple deterministic function of game
+state reachable this way — a real-browser-only condition (a `setInterval`
+throttle, a GC pause, something specific to that session) is more likely
+than a logic bug at this point, and this sandbox has no way to reproduce
+or observe that directly.
+
+**Given that, the fix isn't a guessed root-cause patch — it's a
+watchdog.** `HeistGame.tsx`'s tick loop (`run.advance()` / `run.draw()` /
+`setHud()`) is now wrapped in try/catch: on any thrown error, the
+interval stops cleanly, the error is logged, and a `crashError` state
+drives a visible recovery screen ("SOMETHING BROKE MID-RUN" + RESTART) —
+the same "never strand the player silently" fix already applied twice
+this session to the sign-in dead ends. If the exact cause resurfaces,
+the player gets a way out instead of a frozen screen and no explanation;
+if it was a one-off (a genuine browser hiccup, not a deterministic bug),
+this costs nothing and is otherwise invisible. Separately: navigating to
+PROFILE and back to PLAY after this always resets to the mode-select
+screen — confirmed as existing, unrelated behavior (`HeistGame` fully
+unmounts whenever the PLAY tab isn't active, per `page.tsx`'s
+conditional render), not something that changed or broke this round.
+
 ## P7 — perRun path chosen; `HeistPlay.sol` written and tested, not deployed
 
 **The user picked the path and gave the design directly**: perRun, not

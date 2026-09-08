@@ -70,6 +70,15 @@ export default function HeistGame() {
   const nameRef = useRef<string>(getUsername() ?? `guest${Math.floor(Math.random() * 900 + 100)}`)
   const reportedRef = useRef(false)
   const [hud, setHud] = useState(() => snapshot(runRef.current))
+  // Set if a tick throws mid-run — reported live as an unexplained freeze
+  // with no error and no way out (police/traffic visibly frozen too,
+  // consistent with the same exception recurring every tick before
+  // setHud()/draw() ever ran again). Extensive simulated testing (5000+
+  // trials replaying HeistRun's own advance()+draw() well past crossed=17,
+  // including sprint) found no reproducible engine/render exception — this
+  // is a safety net for whatever specific real-browser condition triggered
+  // it, so a repeat doesn't strand the player silently again.
+  const [crashError, setCrashError] = useState<string | null>(null)
   const [connected, setConnected] = useState(false)
   useEffect(() => {
     setConnected(Boolean(getIdentity()))
@@ -145,6 +154,7 @@ export default function HeistGame() {
     }
     setMode(m)
     setReady(false)
+    setCrashError(null)
     if (m === 'play') {
       const ok = await buildPlayRun()
       if (!ok) { setMode(null); setReady(true); return }
@@ -177,6 +187,7 @@ export default function HeistGame() {
       return
     }
     setReady(false)
+    setCrashError(null)
     if (demo) {
       const run = await buildRun(true)
       runRef.current = run
@@ -236,9 +247,21 @@ export default function HeistGame() {
       // live() internally, but the caught->lost transition (1.6s after the
       // arrest) only fires inside advance(). Gating the call itself here
       // froze the run on the flashing red "caught" frame forever.
-      run.advance()
-      run.draw(ctx)
-      setHud(snapshot(run))
+      try {
+        run.advance()
+        run.draw(ctx)
+        setHud(snapshot(run))
+      } catch (err) {
+        // A tick throwing here used to mean total silence: no error
+        // shown, nothing moving (same state redrawn forever since draw()/
+        // setHud() never ran again), no way out but navigating away —
+        // reported live. This turns that into a visible, recoverable
+        // state instead of a dead end, whatever the actual cause was.
+        console.error('HeistRun tick failed:', err)
+        window.clearInterval(id)
+        setCrashError(err instanceof Error ? err.message : 'Something went wrong mid-run.')
+        return
+      }
       if (!run.live() && !reportedRef.current) {
         reportedRef.current = true
         if (run.state.mode === 'paid') {
@@ -503,6 +526,33 @@ export default function HeistGame() {
               <div style={{ fontSize: theme.type.size.feed, color: theme.palette.gold }}>a painting, kept — see MY HAUL</div>
             )}
             <button onClick={restart} style={buttonStyle}>RUN AGAIN</button>
+          </div>
+        )}
+        {crashError && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: W * SCALE,
+              height: H * SCALE,
+              background: 'rgba(5,6,10,0.92)',
+              color: theme.palette.pale,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              fontFamily: theme.type.family,
+              textAlign: 'center',
+              padding: 12,
+            }}
+          >
+            <div style={{ fontSize: theme.type.size.body, color: theme.palette.sirenRed }}>SOMETHING BROKE MID-RUN</div>
+            <div style={{ fontSize: theme.type.size.feed, color: theme.palette.concrete, maxWidth: 240 }}>
+              Sorry about that — no progress was lost from before this happened.
+            </div>
+            <button onClick={restart} style={buttonStyle}>RESTART</button>
           </div>
         )}
         <div
